@@ -1,0 +1,504 @@
+{% extends "base.html" %}
+
+{% block title %}Borrower Snapshot - Banker Analytics{% endblock %}
+
+{% block content %}
+<div class="feature-page">
+    <a href="/" class="back-link">← Back to Hub</a>
+
+    <h1 class="page-title">Borrower Snapshot</h1>
+    <p class="page-subtitle">Complete single-screen overview of loan balance and rate dynamics</p>
+
+    <!-- M3: Analysis Info Card (shown when opened from history) -->
+    {% if analysis_info %}
+    <section class="analysis-info-card">
+        {% if is_from_history %}
+        <div class="history-badge">📋 Opened from Analysis History</div>
+        {% endif %}
+        <div class="info-grid">
+            <div class="info-item">
+                <span class="info-label">Analysis</span>
+                <span class="info-value">{{ analysis_info.filename }}</span>
+            </div>
+            <div class="info-item">
+                <span class="info-label">Uploaded</span>
+                <span class="info-value">{{ analysis_info.uploaded_at | default('N/A') }}</span>
+            </div>
+            <div class="info-item">
+                <span class="info-label">Date Range</span>
+                <span class="info-value">
+                    {% if analysis_info.date_min and analysis_info.date_max %}
+                        {{ analysis_info.date_min }} to {{ analysis_info.date_max }}
+                    {% else %}
+                        N/A
+                    {% endif %}
+                </span>
+            </div>
+            <div class="info-item">
+                <span class="info-label">Rows</span>
+                <span class="info-value">{{ analysis_info.row_count | default('N/A') }}</span>
+            </div>
+        </div>
+    </section>
+    {% endif %}
+
+    <!-- KPI Tiles Section -->
+    <section class="snapshot-section">
+        <h2 class="section-title">Key Metrics</h2>
+        {{ kpi_html | safe }}
+    </section>
+
+    <!-- Charts Section -->
+    <section class="snapshot-section">
+        <h2 class="section-title">Trends Over Time</h2>
+        <div class="charts-grid">
+            <div class="chart-card">
+                {{ balance_chart | safe }}
+            </div>
+            <div class="chart-card">
+                {{ rate_chart | safe }}
+            </div>
+        </div>
+    </section>
+
+    <!-- M3.5: Trend Analysis Section -->
+    {% if trends_data %}
+    <section class="snapshot-section">
+        <h2 class="section-title">📊 Trend Analysis (Multi-Window)</h2>
+        <div class="trends-container">
+            {% for window_days, window_trends in trends_data.items() %}
+            <div class="trend-window-card">
+                <h3 class="trend-window-title">{{ window_days }}-Day Window</h3>
+                <div class="trend-metrics-grid">
+                    {% if window_trends.balance %}
+                        {% set balance = window_trends.balance %}
+                        <div class="trend-metric balance">
+                            <span class="trend-label">Balance</span>
+                            <div class="trend-direction">
+                                {% if balance.metrics.direction == 'up' %}
+                                    📈 Uptrend
+                                {% elif balance.metrics.direction == 'down' %}
+                                    📉 Downtrend
+                                {% else %}
+                                    ➡️ Flat
+                                {% endif %}
+                            </div>
+                            <div class="trend-details">
+                                <span class="detail-item">Slope: <strong>{{ balance.metrics.slope_per_day|round(6) }}</strong>/day</span>
+                                <span class="detail-item">Volatility: <strong>{{ balance.metrics.volatility|round(4) }}</strong></span>
+                                <span class="detail-item">Confidence: <strong>{{ balance.metrics.confidence|title }}</strong></span>
+                                <span class="detail-item">Points: <strong>{{ balance.metrics.sample_size }}</strong></span>
+                            </div>
+                        </div>
+                    {% endif %}
+                    {% if window_trends.rate %}
+                        {% set rate = window_trends.rate %}
+                        <div class="trend-metric rate">
+                            <span class="trend-label">Rate</span>
+                            <div class="trend-direction">
+                                {% if rate.metrics.direction == 'up' %}
+                                    📈 Uptrend
+                                {% elif rate.metrics.direction == 'down' %}
+                                    📉 Downtrend
+                                {% else %}
+                                    ➡️ Flat
+                                {% endif %}
+                            </div>
+                            <div class="trend-details">
+                                <span class="detail-item">Slope: <strong>{{ rate.metrics.slope_per_day|round(6) }}</strong>/day</span>
+                                <span class="detail-item">Volatility: <strong>{{ rate.metrics.volatility|round(4) }}</strong></span>
+                                <span class="detail-item">Confidence: <strong>{{ rate.metrics.confidence|title }}</strong></span>
+                                <span class="detail-item">Points: <strong>{{ rate.metrics.sample_size }}</strong></span>
+                            </div>
+                        </div>
+                    {% endif %}
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+    </section>
+    {% endif %}
+
+    <!-- Flags Section -->
+    {% if has_flags %}
+    <section class="snapshot-section">
+        <h2 class="section-title">⚠️ Risk Flags</h2>
+        <div class="card flags-card">
+            <ul class="flags-list">
+                {% if flags.volatility_spike %}
+                    <li><strong>Volatility Spike:</strong> Balance shows significant volatility (${{ balance_stdev | tofloat | round(2) }})</li>
+                {% endif %}
+                {% if flags.trend_change %}
+                    <li><strong>Trend Change:</strong> Direction of balance movement has reversed</li>
+                {% endif %}
+                {% if flags.missing_dates %}
+                    <li><strong>Missing Dates:</strong> Gaps in reporting detected; verify data completeness</li>
+                {% endif %}
+                {% if flags.outlier_count > 0 %}
+                    <li><strong>Outliers:</strong> {{ flags.outlier_count }} statistical outlier(s) detected</li>
+                {% endif %}
+            </ul>
+        </div>
+    </section>
+    {% endif %}
+
+    <!-- Narrative Summary Section -->
+    <section class="snapshot-section">
+        <h2 class="section-title">Summary</h2>
+        <div class="card narrative-card">
+            {{ narrative | safe }}
+        </div>
+    </section>
+
+    <!-- M3: Previous Exports Section (shown when from history) -->
+    {% if exports %}
+    <section class="snapshot-section">
+        <h2 class="section-title">📥 Previous Exports</h2>
+        <div class="exports-list">
+            {% for export in exports %}
+            <div class="export-item">
+                <div class="export-info">
+                    <span class="export-kind">
+                        {% if export.report_kind == 'snapshot_pdf' %}
+                        📊 Snapshot Report
+                        {% elif export.report_kind == 'simulator_pdf' %}
+                        ⚡ Simulator Report
+                        {% elif export.report_kind == 'explain_pdf' %}
+                        💡 Explanation Report
+                        {% else %}
+                        {{ export.report_kind | replace('_', ' ') | title }}
+                        {% endif %}
+                    </span>
+                    <span class="export-meta">
+                        Exported {{ export.created_at | default('Unknown') }} •
+                        {% if export.file_size %}
+                            {{ (export.file_size / 1024) | round | int }} KB
+                        {% else %}
+                            Unknown size
+                        {% endif %}
+                    </span>
+                </div>
+                <a href="/exports/{{ export.file_path.split('/')[-1] }}" class="btn-download" title="Download PDF">
+                    ⬇ Download
+                </a>
+            </div>
+            {% endfor %}
+        </div>
+    </section>
+    {% endif %}
+
+    <!-- Related Features -->
+    <section class="snapshot-section">
+        <h2 class="section-title">Next Steps</h2>
+        <div class="related-features">
+            <button class="btn-export-pdf" onclick="exportPDFHandler('{{ session_id }}', '{{ analysis_id }}', 'snapshot')">
+                📄 Export PDF
+            </button>
+            <a href="/simulator/{{ route_prefix }}{{ route_id }}" class="btn-feature">
+                ⚡ Run Stress Scenarios
+            </a>
+            <a href="/explain/{{ route_prefix }}{{ route_id }}" class="btn-feature">
+                💡 Get AI Narrative
+            </a>
+        </div>
+    </section>
+</div>
+
+<style>
+    .analysis-info-card {
+        background: linear-gradient(135deg, rgba(0, 217, 255, 0.1) 0%, rgba(0, 217, 255, 0.05) 100%);
+        border: 1px solid rgba(0, 217, 255, 0.2);
+        border-radius: 8px;
+        padding: 20px;
+        margin-bottom: 30px;
+    }
+
+    .history-badge {
+        display: inline-block;
+        background: rgba(0, 217, 255, 0.2);
+        color: #00d9ff;
+        padding: 6px 12px;
+        border-radius: 4px;
+        font-size: 12px;
+        font-weight: 600;
+        margin-bottom: 15px;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+    }
+
+    .info-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+        gap: 15px;
+    }
+
+    .info-item {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+    }
+
+    .info-label {
+        font-size: 12px;
+        color: #808090;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        font-weight: 600;
+    }
+
+    .info-value {
+        font-size: 14px;
+        color: #e0e0e0;
+        font-weight: 500;
+    }
+
+    .exports-list {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+    }
+
+    .export-item {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 12px;
+        background: rgba(0, 217, 255, 0.05);
+        border-left: 3px solid rgba(0, 217, 255, 0.3);
+        border-radius: 4px;
+    }
+
+    .export-info {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+    }
+
+    .export-kind {
+        color: #00d9ff;
+        font-weight: 600;
+        font-size: 13px;
+    }
+
+    .export-meta {
+        color: #808090;
+        font-size: 11px;
+    }
+
+    .btn-download {
+        background: linear-gradient(135deg, rgba(0, 217, 255, 0.2) 0%, rgba(0, 217, 255, 0.1) 100%);
+        color: #00d9ff;
+        border: 1px solid rgba(0, 217, 255, 0.4);
+        padding: 6px 12px;
+        border-radius: 4px;
+        text-decoration: none;
+        font-size: 12px;
+        font-weight: 600;
+        transition: all 0.2s ease;
+        cursor: pointer;
+        white-space: nowrap;
+    }
+
+    .btn-download:hover {
+        background: linear-gradient(135deg, rgba(0, 217, 255, 0.3) 0%, rgba(0, 217, 255, 0.2) 100%);
+        border-color: #00d9ff;
+    }
+
+    .charts-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 20px;
+        margin-top: 20px;
+    }
+
+    @media (max-width: 1200px) {
+        .charts-grid {
+            grid-template-columns: 1fr;
+        }
+    }
+
+    .chart-card {
+        background: rgba(26, 26, 46, 0.8);
+        border: 1px solid rgba(0, 217, 255, 0.2);
+        border-radius: 12px;
+        padding: 15px;
+        box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+    }
+
+    .flags-list {
+        list-style: none;
+        padding: 0;
+    }
+
+    .flags-list li {
+        padding: 12px 0;
+        border-bottom: 1px solid rgba(0, 217, 255, 0.1);
+        color: #FFB700;
+    }
+
+    .flags-list li:last-child {
+        border-bottom: none;
+    }
+
+    .narrative-card {
+        line-height: 1.8;
+    }
+
+    .narrative-card p {
+        margin-bottom: 15px;
+        color: #e0e0e0;
+    }
+
+    .related-features {
+        display: flex;
+        gap: 15px;
+        margin-top: 15px;
+    }
+
+    .related-features .btn-feature {
+        flex: 1;
+        padding: 12px 20px;
+        text-align: center;
+    }
+
+    @media (max-width: 768px) {
+        .info-grid {
+            grid-template-columns: 1fr;
+        }
+
+        .export-item {
+            flex-direction: column;
+            align-items: flex-start;
+        }
+
+        .btn-download {
+            align-self: flex-start;
+        }
+
+        .related-features {
+            flex-direction: column;
+        }
+
+        .related-features .btn-feature {
+            width: 100%;
+        }
+    }
+
+    /* M3.5: Trend Analysis Section Styles */
+    .trends-container {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+        gap: 20px;
+    }
+
+    .trend-window-card {
+        background: linear-gradient(135deg, rgba(0, 217, 255, 0.08) 0%, rgba(0, 217, 255, 0.03) 100%);
+        border: 1px solid rgba(0, 217, 255, 0.2);
+        border-radius: 8px;
+        padding: 20px;
+    }
+
+    .trend-window-title {
+        margin: 0 0 15px 0;
+        font-size: 14px;
+        font-weight: 600;
+        color: #00d9ff;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+    }
+
+    .trend-metrics-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+        gap: 12px;
+    }
+
+    .trend-metric {
+        background: rgba(30, 30, 50, 0.8);
+        border: 1px solid rgba(0, 217, 255, 0.15);
+        border-radius: 6px;
+        padding: 12px;
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+    }
+
+    .trend-metric.balance {
+        border-left: 3px solid #00d9ff;
+    }
+
+    .trend-metric.rate {
+        border-left: 3px solid #ffa500;
+    }
+
+    .trend-label {
+        font-size: 11px;
+        color: #808090;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        font-weight: 600;
+    }
+
+    .trend-direction {
+        font-size: 13px;
+        font-weight: 600;
+        color: #e0e0e0;
+    }
+
+    .trend-details {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+        font-size: 11px;
+    }
+
+    .detail-item {
+        color: #b0b0c0;
+        display: flex;
+        justify-content: space-between;
+    }
+
+    .detail-item strong {
+        color: #00d9ff;
+        font-weight: 600;
+    }
+
+    .trend-metric.rate .detail-item strong {
+        color: #ffa500;
+    }
+</style>
+
+<script>
+    function exportPDFHandler(sessionId, analysisId, feature) {
+        const endpoint = analysisId ? `/snapshot/a/${analysisId}/export-pdf` : `/snapshot/${sessionId}/export-pdf`;
+
+        fetch(endpoint, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                const link = document.createElement('a');
+                link.href = data.download_url;
+                link.download = data.filename;
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
+                alert(`PDF exported successfully! (${data.size_mb} MB)`);
+                // Reload page to show new export in list
+                setTimeout(() => location.reload(), 1000);
+            } else {
+                alert('Error exporting PDF: ' + (data.error || 'Unknown error'));
+            }
+        })
+        .catch(error => {
+            console.error('Export error:', error);
+            alert('Error exporting PDF: ' + error.message);
+        });
+    }
+</script>
+{% endblock %}

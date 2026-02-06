@@ -1,0 +1,561 @@
+{% extends "base.html" %}
+
+{% block title %}Analysis History - Banker Analytics{% endblock %}
+
+{% block content %}
+<div class="history-container">
+    <!-- Header Section -->
+    <div class="history-header">
+        <h1>Analysis History</h1>
+        <p class="header-subtitle">View and manage your saved analyses</p>
+        <a href="/" class="btn-upload-new">Upload New Analysis</a>
+    </div>
+
+    <!-- Empty State -->
+    {% if not analyses or analyses|length == 0 %}
+    <div class="empty-state">
+        <div class="empty-icon">📊</div>
+        <h2>No Analyses Yet</h2>
+        <p>Start by uploading a CSV file to begin your analysis.</p>
+        <a href="/" class="btn-primary">Upload Your First Analysis</a>
+    </div>
+
+    <!-- Analyses Table -->
+    {% else %}
+    <div class="analyses-table-container">
+        <table class="analyses-table">
+            <thead>
+                <tr>
+                    <th>Filename</th>
+                    <th>Uploaded</th>
+                    <th>Data Range</th>
+                    <th>Rows</th>
+                    <th>90-Day Trends</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for analysis in analyses %}
+                <tr class="analysis-row" data-analysis-id="{{ analysis.id }}">
+                    <td class="filename-cell">
+                        <span class="file-icon">📄</span>
+                        {{ analysis.filename }}
+                    </td>
+                    <td class="uploaded-cell">
+                        <span class="date-display">{{ analysis.uploaded_at_display }}</span>
+                        <span class="date-raw">({{ analysis.uploaded_at|default('N/A') }})</span>
+                    </td>
+                    <td class="range-cell">
+                        {% if analysis.date_min and analysis.date_max %}
+                            <span class="date-range">{{ analysis.date_min_display }} to {{ analysis.date_max_display }}</span>
+                        {% else %}
+                            <span class="no-data">N/A</span>
+                        {% endif %}
+                    </td>
+                    <td class="rows-cell">
+                        <span class="row-count">{{ analysis.row_count }}</span>
+                    </td>
+                    <td class="trends-cell">
+                        {% if analysis.balance_trend or analysis.rate_trend %}
+                            <div class="trend-badges">
+                                {% if analysis.balance_trend %}
+                                    {% set balance_metrics = analysis.balance_trend|from_json %}
+                                    <span class="trend-badge balance" title="Balance trend: {{ balance_metrics.direction }}">
+                                        {% if balance_metrics.direction == 'up' %}📈{% elif balance_metrics.direction == 'down' %}📉{% else %}➡️{% endif %}
+                                        {{ balance_metrics.direction|title }}
+                                    </span>
+                                {% endif %}
+                                {% if analysis.rate_trend %}
+                                    {% set rate_metrics = analysis.rate_trend|from_json %}
+                                    <span class="trend-badge rate" title="Rate trend: {{ rate_metrics.direction }}">
+                                        {% if rate_metrics.direction == 'up' %}📈{% elif rate_metrics.direction == 'down' %}📉{% else %}➡️{% endif %}
+                                        {{ rate_metrics.direction|title }}
+                                    </span>
+                                {% endif %}
+                            </div>
+                        {% else %}
+                            <span class="no-trends">—</span>
+                        {% endif %}
+                    </td>
+                    <td class="actions-cell">
+                        <div class="action-buttons">
+                            <a href="/snapshot/a/{{ analysis.id }}" class="btn-action btn-snapshot" title="View snapshot">
+                                Snapshot
+                            </a>
+                            <a href="/simulator/a/{{ analysis.id }}" class="btn-action btn-simulator" title="Run simulator">
+                                Simulator
+                            </a>
+                            <a href="/explain/a/{{ analysis.id }}" class="btn-action btn-explain" title="Read explanation">
+                                Explain
+                            </a>
+                        </div>
+                    </td>
+                </tr>
+
+                <!-- Exports Row -->
+                {% if analysis.exports and analysis.exports|length > 0 %}
+                <tr class="exports-row" data-analysis-id="{{ analysis.id }}">
+                    <td colspan="5">
+                        <div class="exports-section">
+                            <h4 class="exports-title">📥 Previous Exports</h4>
+                            <div class="exports-list">
+                                {% for export in analysis.exports %}
+                                <div class="export-item">
+                                    <span class="export-icon">
+                                        {% if export.report_kind == 'snapshot_pdf' %}
+                                        📊
+                                        {% elif export.report_kind == 'simulator_pdf' %}
+                                        ⚡
+                                        {% elif export.report_kind == 'explain_pdf' %}
+                                        💡
+                                        {% else %}
+                                        📄
+                                        {% endif %}
+                                    </span>
+                                    <span class="export-info">
+                                        <span class="export-kind">
+                                            {% if export.report_kind == 'snapshot_pdf' %}
+                                            Snapshot Report
+                                            {% elif export.report_kind == 'simulator_pdf' %}
+                                            Simulator Report
+                                            {% elif export.report_kind == 'explain_pdf' %}
+                                            Explanation Report
+                                            {% else %}
+                                            {{ export.report_kind|replace('_', ' ')|title }}
+                                            {% endif %}
+                                        </span>
+                                        <span class="export-meta">
+                                            Exported {{ export.created_at|default('Unknown') }} •
+                                            {% if export.file_size %}
+                                                {{ (export.file_size / 1024)|round|int }} KB
+                                            {% else %}
+                                                Unknown size
+                                            {% endif %}
+                                        </span>
+                                    </span>
+                                    <a href="/exports/{{ export.file_path.split('/')[-1] }}" class="btn-download" title="Download PDF">
+                                        ⬇ Download
+                                    </a>
+                                </div>
+                                {% endfor %}
+                            </div>
+                        </div>
+                    </td>
+                </tr>
+                {% endif %}
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% endif %}
+</div>
+
+<style>
+    .history-container {
+        max-width: 1200px;
+        margin: 0 auto;
+        padding: 20px;
+    }
+
+    /* Header Section */
+    .history-header {
+        background: linear-gradient(135deg, rgba(0, 217, 255, 0.1) 0%, rgba(0, 217, 255, 0.05) 100%);
+        border: 1px solid rgba(0, 217, 255, 0.2);
+        border-radius: 8px;
+        padding: 30px;
+        margin-bottom: 30px;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 20px;
+        flex-wrap: wrap;
+    }
+
+    .history-header h1 {
+        font-size: 28px;
+        color: #e0e0e0;
+        margin: 0;
+        flex: 1;
+    }
+
+    .header-subtitle {
+        color: #b0b0c0;
+        margin: 5px 0 0 0;
+        font-size: 14px;
+    }
+
+    .btn-upload-new {
+        background: linear-gradient(135deg, #00d9ff 0%, #00b8d4 100%);
+        color: #0f0f1e;
+        padding: 10px 20px;
+        border-radius: 6px;
+        text-decoration: none;
+        font-weight: 600;
+        font-size: 14px;
+        cursor: pointer;
+        transition: all 0.3s ease;
+        border: none;
+        white-space: nowrap;
+    }
+
+    .btn-upload-new:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 10px 20px rgba(0, 217, 255, 0.3);
+    }
+
+    /* Empty State */
+    .empty-state {
+        text-align: center;
+        padding: 60px 20px;
+        background: rgba(0, 217, 255, 0.05);
+        border: 2px dashed rgba(0, 217, 255, 0.2);
+        border-radius: 8px;
+        color: #b0b0c0;
+    }
+
+    .empty-icon {
+        font-size: 64px;
+        margin-bottom: 20px;
+    }
+
+    .empty-state h2 {
+        color: #e0e0e0;
+        margin: 0 0 10px;
+        font-size: 24px;
+    }
+
+    .empty-state p {
+        margin-bottom: 20px;
+        font-size: 14px;
+    }
+
+    /* Table Container */
+    .analyses-table-container {
+        overflow-x: auto;
+        border-radius: 8px;
+        border: 1px solid rgba(0, 217, 255, 0.2);
+        background: #151520;
+    }
+
+    .analyses-table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 14px;
+    }
+
+    .analyses-table thead {
+        background: linear-gradient(90deg, rgba(0, 217, 255, 0.1) 0%, rgba(0, 217, 255, 0.05) 100%);
+        border-bottom: 2px solid rgba(0, 217, 255, 0.2);
+    }
+
+    .analyses-table th {
+        padding: 15px;
+        text-align: left;
+        color: #00d9ff;
+        font-weight: 600;
+        text-transform: uppercase;
+        font-size: 12px;
+        letter-spacing: 0.5px;
+    }
+
+    .analysis-row {
+        border-bottom: 1px solid rgba(0, 217, 255, 0.1);
+        transition: background-color 0.2s ease;
+    }
+
+    .analysis-row:hover {
+        background-color: rgba(0, 217, 255, 0.05);
+    }
+
+    .analysis-row td {
+        padding: 15px;
+        color: #e0e0e0;
+    }
+
+    /* Cell Styling */
+    .filename-cell {
+        font-weight: 500;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+    }
+
+    .file-icon {
+        font-size: 16px;
+    }
+
+    .uploaded-cell {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+    }
+
+    .date-display {
+        color: #00d9ff;
+        font-weight: 500;
+    }
+
+    .date-raw {
+        color: #808090;
+        font-size: 12px;
+    }
+
+    .range-cell {
+        color: #b0b0c0;
+    }
+
+    .date-range {
+        background: rgba(0, 217, 255, 0.1);
+        padding: 4px 8px;
+        border-radius: 4px;
+        font-size: 12px;
+    }
+
+    .no-data {
+        color: #808090;
+        font-style: italic;
+    }
+
+    .rows-cell {
+        text-align: center;
+    }
+
+    .row-count {
+        background: rgba(0, 217, 255, 0.1);
+        padding: 4px 12px;
+        border-radius: 4px;
+        color: #00d9ff;
+        font-weight: 600;
+    }
+
+    /* Trends Cell */
+    .trends-cell {
+        text-align: center;
+    }
+
+    .trend-badges {
+        display: flex;
+        gap: 6px;
+        justify-content: center;
+        flex-wrap: wrap;
+    }
+
+    .trend-badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        padding: 4px 10px;
+        border-radius: 4px;
+        font-size: 12px;
+        font-weight: 600;
+        white-space: nowrap;
+    }
+
+    .trend-badge.balance {
+        background: rgba(0, 217, 255, 0.15);
+        color: #00d9ff;
+        border: 1px solid rgba(0, 217, 255, 0.3);
+    }
+
+    .trend-badge.rate {
+        background: rgba(255, 165, 0, 0.15);
+        color: #ffa500;
+        border: 1px solid rgba(255, 165, 0, 0.3);
+    }
+
+    .no-trends {
+        color: #808090;
+        font-style: italic;
+        font-size: 14px;
+    }
+
+    /* Action Buttons */
+    .actions-cell {
+        display: flex;
+        justify-content: flex-end;
+    }
+
+    .action-buttons {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+        justify-content: flex-end;
+    }
+
+    .btn-action {
+        padding: 6px 12px;
+        border-radius: 4px;
+        text-decoration: none;
+        font-size: 12px;
+        font-weight: 600;
+        border: 1px solid;
+        transition: all 0.2s ease;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        cursor: pointer;
+        display: inline-block;
+        text-align: center;
+    }
+
+    .btn-snapshot {
+        color: #00d9ff;
+        border-color: rgba(0, 217, 255, 0.5);
+        background: rgba(0, 217, 255, 0.1);
+    }
+
+    .btn-snapshot:hover {
+        background: rgba(0, 217, 255, 0.2);
+        border-color: #00d9ff;
+    }
+
+    .btn-simulator {
+        color: #ffa500;
+        border-color: rgba(255, 165, 0, 0.5);
+        background: rgba(255, 165, 0, 0.05);
+    }
+
+    .btn-simulator:hover {
+        background: rgba(255, 165, 0, 0.15);
+        border-color: #ffa500;
+    }
+
+    .btn-explain {
+        color: #7fff00;
+        border-color: rgba(127, 255, 0, 0.5);
+        background: rgba(127, 255, 0, 0.05);
+    }
+
+    .btn-explain:hover {
+        background: rgba(127, 255, 0, 0.15);
+        border-color: #7fff00;
+    }
+
+    /* Exports Section */
+    .exports-row {
+        background: rgba(0, 217, 255, 0.02);
+    }
+
+    .exports-row td {
+        padding: 10px 15px;
+        border-bottom: 1px solid rgba(0, 217, 255, 0.1);
+    }
+
+    .exports-section {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+    }
+
+    .exports-title {
+        margin: 0;
+        color: #00d9ff;
+        font-size: 14px;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+    }
+
+    .exports-list {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        padding-left: 16px;
+    }
+
+    .export-item {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 8px;
+        background: rgba(0, 217, 255, 0.05);
+        border-left: 3px solid rgba(0, 217, 255, 0.3);
+        border-radius: 4px;
+    }
+
+    .export-icon {
+        font-size: 18px;
+        min-width: 24px;
+    }
+
+    .export-info {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+    }
+
+    .export-kind {
+        color: #00d9ff;
+        font-weight: 600;
+        font-size: 13px;
+    }
+
+    .export-meta {
+        color: #808090;
+        font-size: 11px;
+    }
+
+    .btn-download {
+        background: linear-gradient(135deg, rgba(0, 217, 255, 0.2) 0%, rgba(0, 217, 255, 0.1) 100%);
+        color: #00d9ff;
+        border: 1px solid rgba(0, 217, 255, 0.4);
+        padding: 6px 12px;
+        border-radius: 4px;
+        text-decoration: none;
+        font-size: 12px;
+        font-weight: 600;
+        transition: all 0.2s ease;
+        cursor: pointer;
+        white-space: nowrap;
+    }
+
+    .btn-download:hover {
+        background: linear-gradient(135deg, rgba(0, 217, 255, 0.3) 0%, rgba(0, 217, 255, 0.2) 100%);
+        border-color: #00d9ff;
+    }
+
+    /* Responsive Design */
+    @media (max-width: 768px) {
+        .history-header {
+            flex-direction: column;
+            align-items: flex-start;
+        }
+
+        .history-header h1 {
+            font-size: 22px;
+        }
+
+        .analyses-table {
+            font-size: 12px;
+        }
+
+        .analyses-table th,
+        .analysis-row td {
+            padding: 10px;
+        }
+
+        .action-buttons {
+            flex-direction: column;
+            gap: 4px;
+        }
+
+        .btn-action {
+            width: 100%;
+            padding: 8px 8px;
+        }
+
+        .exports-list {
+            padding-left: 8px;
+        }
+
+        .export-item {
+            flex-direction: column;
+            align-items: flex-start;
+        }
+
+        .btn-download {
+            align-self: flex-start;
+        }
+    }
+</style>
+{% endblock %}

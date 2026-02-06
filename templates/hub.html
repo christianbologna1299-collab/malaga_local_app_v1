@@ -1,0 +1,310 @@
+{% extends "base.html" %}
+
+{% block title %}Banker Analytics - Hub{% endblock %}
+
+{% block content %}
+<div class="hub-header">
+    <!-- M3: Auth-aware header -->
+    {% if current_user %}
+    <div class="auth-info">
+        <span class="user-greeting">Welcome, <strong>{{ current_user.username }}</strong></span>
+        <div class="auth-actions">
+            <a href="/history" class="btn-history">📋 View Analysis History</a>
+            <form method="post" action="/logout" style="display:inline;">
+                <button type="submit" class="btn-logout">Sign Out</button>
+            </form>
+        </div>
+    </div>
+    {% else %}
+    <div class="auth-prompt">
+        <p>Sign in to save your analyses and access your history.</p>
+        <a href="/login" class="btn-login">Sign In / Register</a>
+    </div>
+    {% endif %}
+</div>
+
+<div class="hub-content">
+    <!-- Section 1: Quick Analysis (Milestone 1) -->
+    <section class="hub-section">
+        <h2 class="section-title">Quick Analysis</h2>
+        <div class="card upload-card">
+            <h3>Upload CSV & Analyze</h3>
+            <p class="card-description">Quick one-click analysis: view balance chart, data preview, and summary statistics.</p>
+            <form id="m1UploadForm" enctype="multipart/form-data">
+                <div class="form-group">
+                    <label for="m1CsvFile">Select CSV File:</label>
+                    <input type="file" id="m1CsvFile" name="file" accept=".csv" required>
+                    <p class="help-text">Required columns: date (YYYY-MM-DD), balance, rate</p>
+                </div>
+                <button type="submit" class="btn-primary">Run Analysis</button>
+            </form>
+        </div>
+    </section>
+
+    <!-- Section 2: Feature Hub (Milestone 2) -->
+    <section class="hub-section">
+        <h2 class="section-title">Advanced Analytics</h2>
+        <p class="section-subtitle">Upload a CSV to unlock multi-feature analysis. Your data is stored locally during your session.</p>
+
+        <div class="feature-grid">
+            <!-- Feature Card 1: Borrower Snapshot -->
+            <div class="feature-card" id="feature-snapshot" data-disabled="true">
+                <div class="feature-icon">📊</div>
+                <h3>Borrower Snapshot</h3>
+                <p class="feature-description">
+                    One-screen overview: balance & rate charts, KPI tiles, risk flags, and plain-language summary.
+                </p>
+                <button type="button" class="btn-feature" data-feature="snapshot" disabled>
+                    View Snapshot
+                </button>
+            </div>
+
+            <!-- Feature Card 2: Scenario & Stress Simulator -->
+            <div class="feature-card" id="feature-simulator" data-disabled="true">
+                <div class="feature-icon">⚡</div>
+                <h3>Scenario & Stress Simulator</h3>
+                <p class="feature-description">
+                    Apply rate and balance shocks. Compare baseline vs. scenarios. See impact on end balance.
+                </p>
+                <button type="button" class="btn-feature" data-feature="simulator" disabled>
+                    Run Simulator
+                </button>
+            </div>
+
+            <!-- Feature Card 3: Explain Engine -->
+            <div class="feature-card" id="feature-explain" data-disabled="true">
+                <div class="feature-icon">💡</div>
+                <h3>Explain Engine</h3>
+                <p class="feature-description">
+                    Rule-based narratives: "What Matters", "What Risks", and "What's Next" recommendations.
+                </p>
+                <button type="button" class="btn-feature" data-feature="explain" disabled>
+                    Read Explanation
+                </button>
+            </div>
+        </div>
+    </section>
+</div>
+
+<style>
+    .hub-header {
+        background: linear-gradient(135deg, rgba(0, 217, 255, 0.1) 0%, rgba(0, 217, 255, 0.05) 100%);
+        border-bottom: 2px solid rgba(0, 217, 255, 0.2);
+        padding: 20px;
+        margin-bottom: 30px;
+        border-radius: 8px;
+    }
+
+    .auth-info {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 20px;
+    }
+
+    .user-greeting {
+        font-size: 16px;
+        color: #b0b0c0;
+    }
+
+    .user-greeting strong {
+        color: #00d9ff;
+    }
+
+    .auth-actions {
+        display: flex;
+        gap: 10px;
+    }
+
+    .btn-history,
+    .btn-logout,
+    .btn-login {
+        padding: 8px 16px;
+        border-radius: 6px;
+        text-decoration: none;
+        font-size: 13px;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        cursor: pointer;
+        border: none;
+        transition: all 0.3s ease;
+        display: inline-block;
+    }
+
+    .btn-history {
+        background: rgba(0, 217, 255, 0.2);
+        color: #00d9ff;
+        border: 1px solid rgba(0, 217, 255, 0.4);
+    }
+
+    .btn-history:hover {
+        background: rgba(0, 217, 255, 0.3);
+        border-color: #00d9ff;
+    }
+
+    .btn-logout {
+        background: rgba(255, 87, 51, 0.2);
+        color: #ff5733;
+        border: 1px solid rgba(255, 87, 51, 0.4);
+    }
+
+    .btn-logout:hover {
+        background: rgba(255, 87, 51, 0.3);
+        border-color: #ff5733;
+    }
+
+    .btn-login {
+        background: linear-gradient(135deg, #00d9ff 0%, #00b8d4 100%);
+        color: #0f0f1e;
+    }
+
+    .btn-login:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 10px 20px rgba(0, 217, 255, 0.3);
+    }
+
+    .auth-prompt {
+        text-align: center;
+        padding: 20px 0;
+    }
+
+    .auth-prompt p {
+        color: #b0b0c0;
+        margin-bottom: 15px;
+        font-size: 14px;
+    }
+
+    @media (max-width: 768px) {
+        .auth-info {
+            flex-direction: column;
+            align-items: flex-start;
+        }
+
+        .auth-actions {
+            width: 100%;
+            flex-direction: column;
+        }
+
+        .btn-history,
+        .btn-logout {
+            width: 100%;
+            text-align: center;
+        }
+    }
+</style>
+
+<script>
+    let currentSessionId = null;
+
+    // M1 Upload Form Handler
+    document.getElementById('m1UploadForm').addEventListener('submit', async (e) => {
+
+        e.preventDefault();
+        const formData = new FormData();
+        const fileInput = document.getElementById('m1CsvFile');
+        formData.append('file', fileInput.files[0]);
+
+        try {
+            const response = await fetch('/analyze', {
+                method: 'POST',
+                body: formData
+            });
+
+            if (!response.ok) {
+                const html = await response.text();
+                document.open();
+                document.write(html);
+                document.close();
+            } else {
+                const html = await response.text();
+                document.open();
+                document.write(html);
+                document.close();
+            }
+        } catch (error) {
+            alert('Error: ' + error.message);
+        }
+    });
+
+    // M2 Feature Navigation Handler
+    document.querySelectorAll('.btn-feature').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+            if (currentSessionId && !btn.disabled) {
+                const feature = btn.getAttribute('data-feature');
+                window.location.href = `/${feature}/${currentSessionId}`;
+            } else {
+                alert('Please upload a CSV first to unlock features.');
+            }
+        });
+    });
+
+    // M2 Upload Handler (for feature hub)
+    // We need a second upload form that feeds into M2 flow
+    const m2Form = document.createElement('form');
+    m2Form.id = 'm2UploadForm';
+    m2Form.enctype = 'multipart/form-data';
+    m2Form.style.display = 'none';
+    document.body.appendChild(m2Form);
+
+    // Create hidden file input for M2
+    const createM2Upload = () => {
+        const input = document.createElement('input');
+        input.type = 'file';
+        input.name = 'file';
+        input.accept = '.csv';
+        input.id = 'm2FileInput';
+        m2Form.appendChild(input);
+    };
+
+    createM2Upload();
+
+    // Trigger M2 upload when feature clicked (before session exists)
+    document.querySelectorAll('.feature-card').forEach(card => {
+        card.addEventListener('click', (e) => {
+            // Only trigger if clicking on the card itself (not the disabled button)
+            if (e.target.classList.contains('feature-card')) {
+                document.getElementById('m2FileInput').click();
+            }
+        });
+    });
+
+    // Handle M2 file selection
+    document.getElementById('m2FileInput').addEventListener('change', async (e) => {
+        if (e.target.files.length === 0) return;
+
+        const file = e.target.files[0];
+        const formData = new FormData();
+        formData.append('file', file);
+
+        try {
+            const response = await fetch('/upload', {
+                method: 'POST',
+                body: formData
+            });
+
+            if (response.ok) {
+                const data = await response.json();
+                currentSessionId = data.session_id;
+
+                // Enable feature cards and buttons
+                document.querySelectorAll('.feature-card').forEach(card => {
+                    card.setAttribute('data-disabled', 'false');
+                    const btn = card.querySelector('.btn-feature');
+                    btn.disabled = false;
+                });
+
+                alert(`Session created! You can now explore the features.\nSession ID: ${currentSessionId.substring(0, 8)}...`);
+            } else {
+                const error = await response.json();
+                alert('Error: ' + (error.detail || 'Failed to upload'));
+            }
+        } catch (error) {
+            alert('Error: ' + error.message);
+        }
+
+        // Reset file input
+        e.target.value = '';
+    });
+</script>
+{% endblock %}

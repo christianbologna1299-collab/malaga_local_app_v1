@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Error</title>
+    <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+    <div class="header-bar">
+        <h1>Banker Analytics</h1>
+    </div>
+
+    <div class="container">
+        <a href="/" class="back-link">← Back to Dashboard</a>
+
+        <div class="card error-card">
+            <h2>Analysis Failed</h2>
+            <p class="error-message">{{ error }}</p>
+            <ul class="error-tips">
+                <li>Check that CSV has columns: date, balance, rate</li>
+                <li>Date format must be YYYY-MM-DD</li>
+                <li>Balance and rate must be numeric values</li>
+                <li>File must not be empty</li>
+            </ul>
+        </div>
+    </div>
+</body>
+</html>

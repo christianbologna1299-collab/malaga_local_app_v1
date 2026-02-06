@@ -1,0 +1,417 @@
+{% extends "base.html" %}
+
+{% block title %}Explain Engine - Banker Analytics{% endblock %}
+
+{% block content %}
+<div class="feature-page">
+    <a href="/" class="back-link">← Back to Hub</a>
+
+    <h1 class="page-title">Explain Engine</h1>
+    <p class="page-subtitle">Rule-based, explainable analysis. No machine learning—pure logic from your data.</p>
+
+    <!-- M3: Analysis Info Card (shown when opened from history) -->
+    {% if analysis_info %}
+    <section class="analysis-info-card">
+        {% if is_from_history %}
+        <div class="history-badge">📋 Opened from Analysis History</div>
+        {% endif %}
+        <div class="info-grid">
+            <div class="info-item">
+                <span class="info-label">Analysis</span>
+                <span class="info-value">{{ analysis_info.filename }}</span>
+            </div>
+            <div class="info-item">
+                <span class="info-label">Uploaded</span>
+                <span class="info-value">{{ analysis_info.uploaded_at | default('N/A') }}</span>
+            </div>
+            <div class="info-item">
+                <span class="info-label">Date Range</span>
+                <span class="info-value">
+                    {% if analysis_info.date_min and analysis_info.date_max %}
+                        {{ analysis_info.date_min }} to {{ analysis_info.date_max }}
+                    {% else %}
+                        N/A
+                    {% endif %}
+                </span>
+            </div>
+            <div class="info-item">
+                <span class="info-label">Rows</span>
+                <span class="info-value">{{ analysis_info.row_count | default('N/A') }}</span>
+            </div>
+        </div>
+    </section>
+    {% endif %}
+
+    <!-- Section 1: What Matters -->
+    <section class="explain-section">
+        <div class="card explain-card what-matters">
+            <h2 class="explain-title">
+                <span class="explain-icon">📊</span>
+                Here's What Matters
+            </h2>
+            <div class="explain-content">
+                {{ what_matters | safe }}
+            </div>
+        </div>
+    </section>
+
+    <!-- Section 2: What Risks -->
+    <section class="explain-section">
+        <div class="card explain-card what-risks">
+            <h2 class="explain-title">
+                <span class="explain-icon">⚠️</span>
+                Here's the Risk
+            </h2>
+            <div class="explain-content">
+                {{ what_risks | safe }}
+            </div>
+        </div>
+    </section>
+
+    <!-- Section 3: What's Next -->
+    <section class="explain-section">
+        <div class="card explain-card whats-next">
+            <h2 class="explain-title">
+                <span class="explain-icon">💡</span>
+                Here's the Best Next Move
+            </h2>
+            <div class="explain-content">
+                {{ whats_next | safe }}
+            </div>
+        </div>
+    </section>
+
+    <!-- M3: Previous Exports Section (shown when from history) -->
+    {% if exports %}
+    <section class="explain-section">
+        <h2 class="section-title">📥 Previous Exports</h2>
+        <div class="exports-list">
+            {% for export in exports %}
+            <div class="export-item">
+                <div class="export-info">
+                    <span class="export-kind">
+                        {% if export.report_kind == 'snapshot_pdf' %}
+                        📊 Snapshot Report
+                        {% elif export.report_kind == 'simulator_pdf' %}
+                        ⚡ Simulator Report
+                        {% elif export.report_kind == 'explain_pdf' %}
+                        💡 Explanation Report
+                        {% else %}
+                        {{ export.report_kind | replace('_', ' ') | title }}
+                        {% endif %}
+                    </span>
+                    <span class="export-meta">
+                        Exported {{ export.created_at | default('Unknown') }} •
+                        {% if export.file_size %}
+                            {{ (export.file_size / 1024) | round | int }} KB
+                        {% else %}
+                            Unknown size
+                        {% endif %}
+                    </span>
+                </div>
+                <a href="/exports/{{ export.file_path.split('/')[-1] }}" class="btn-download" title="Download PDF">
+                    ⬇ Download
+                </a>
+            </div>
+            {% endfor %}
+        </div>
+    </section>
+    {% endif %}
+
+    <!-- Related Features -->
+    <section class="explain-section">
+        <h2 class="section-title">Next Steps</h2>
+        <div class="related-features">
+            <button class="btn-export-pdf" onclick="exportPDFHandler('{{ session_id }}', '{{ analysis_id }}', 'explain')">
+                📄 Export PDF
+            </button>
+            <a href="/snapshot/{{ route_prefix }}{{ route_id }}" class="btn-feature">
+                📊 View Snapshot
+            </a>
+            <a href="/simulator/{{ route_prefix }}{{ route_id }}" class="btn-feature">
+                ⚡ Run Simulator
+            </a>
+        </div>
+    </section>
+</div>
+
+<style>
+    .analysis-info-card {
+        background: linear-gradient(135deg, rgba(0, 217, 255, 0.1) 0%, rgba(0, 217, 255, 0.05) 100%);
+        border: 1px solid rgba(0, 217, 255, 0.2);
+        border-radius: 8px;
+        padding: 20px;
+        margin-bottom: 30px;
+    }
+
+    .history-badge {
+        display: inline-block;
+        background: rgba(0, 217, 255, 0.2);
+        color: #00d9ff;
+        padding: 6px 12px;
+        border-radius: 4px;
+        font-size: 12px;
+        font-weight: 600;
+        margin-bottom: 15px;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+    }
+
+    .info-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+        gap: 15px;
+    }
+
+    .info-item {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+    }
+
+    .info-label {
+        font-size: 12px;
+        color: #808090;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        font-weight: 600;
+    }
+
+    .info-value {
+        font-size: 14px;
+        color: #e0e0e0;
+        font-weight: 500;
+    }
+
+    .exports-list {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+    }
+
+    .export-item {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 12px;
+        background: rgba(0, 217, 255, 0.05);
+        border-left: 3px solid rgba(0, 217, 255, 0.3);
+        border-radius: 4px;
+    }
+
+    .export-info {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+    }
+
+    .export-kind {
+        color: #00d9ff;
+        font-weight: 600;
+        font-size: 13px;
+    }
+
+    .export-meta {
+        color: #808090;
+        font-size: 11px;
+    }
+
+    .btn-download {
+        background: linear-gradient(135deg, rgba(0, 217, 255, 0.2) 0%, rgba(0, 217, 255, 0.1) 100%);
+        color: #00d9ff;
+        border: 1px solid rgba(0, 217, 255, 0.4);
+        padding: 6px 12px;
+        border-radius: 4px;
+        text-decoration: none;
+        font-size: 12px;
+        font-weight: 600;
+        transition: all 0.2s ease;
+        cursor: pointer;
+        white-space: nowrap;
+    }
+
+    .btn-download:hover {
+        background: linear-gradient(135deg, rgba(0, 217, 255, 0.3) 0%, rgba(0, 217, 255, 0.2) 100%);
+        border-color: #00d9ff;
+    }
+
+    .explain-section {
+        margin-bottom: 30px;
+    }
+
+    .explain-card {
+        overflow: hidden;
+        transition: all 0.3s ease;
+        border-left: 6px solid transparent;
+    }
+
+    .explain-card.what-matters {
+        border-left-color: #00D9FF;
+    }
+
+    .explain-card.what-risks {
+        border-left-color: #FFB700;
+    }
+
+    .explain-card.whats-next {
+        border-left-color: #00FF7F;
+    }
+
+    .explain-title {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        margin-bottom: 20px;
+        font-size: 20px;
+        font-weight: 600;
+        color: #e0e0e0;
+    }
+
+    .explain-card.what-matters .explain-title {
+        color: #00D9FF;
+    }
+
+    .explain-card.what-risks .explain-title {
+        color: #FFB700;
+    }
+
+    .explain-card.whats-next .explain-title {
+        color: #00FF7F;
+    }
+
+    .explain-icon {
+        font-size: 24px;
+        line-height: 1;
+    }
+
+    .explain-content {
+        color: #b0b0c0;
+        line-height: 1.8;
+        font-size: 15px;
+    }
+
+    .explain-content ul {
+        list-style: none;
+        padding: 0;
+        margin: 0;
+    }
+
+    .explain-content li {
+        padding: 12px 0;
+        padding-left: 20px;
+        position: relative;
+        border-bottom: 1px solid rgba(0, 217, 255, 0.1);
+    }
+
+    .explain-content li:last-child {
+        border-bottom: none;
+    }
+
+    .explain-content li:before {
+        content: "→";
+        position: absolute;
+        left: 0;
+        color: #00d9ff;
+        font-weight: 600;
+    }
+
+    .what-matters .explain-content li:before {
+        color: #00D9FF;
+    }
+
+    .what-risks .explain-content li:before {
+        color: #FFB700;
+    }
+
+    .whats-next .explain-content li:before {
+        color: #00FF7F;
+    }
+
+    .explain-content strong {
+        color: #e0e0e0;
+        font-weight: 600;
+    }
+
+    .explain-content code {
+        background: rgba(0, 217, 255, 0.1);
+        color: #00d9ff;
+        padding: 2px 6px;
+        border-radius: 4px;
+        font-family: 'Courier New', monospace;
+        font-size: 13px;
+    }
+
+    .related-features {
+        display: flex;
+        gap: 15px;
+        margin-top: 15px;
+    }
+
+    .related-features .btn-feature {
+        flex: 1;
+        padding: 12px 20px;
+        text-align: center;
+    }
+
+    @media (max-width: 768px) {
+        .info-grid {
+            grid-template-columns: 1fr;
+        }
+
+        .export-item {
+            flex-direction: column;
+            align-items: flex-start;
+        }
+
+        .btn-download {
+            align-self: flex-start;
+        }
+
+        .explain-title {
+            font-size: 18px;
+        }
+
+        .explain-content {
+            font-size: 14px;
+        }
+
+        .related-features {
+            flex-direction: column;
+        }
+    }
+</style>
+
+<script>
+    function exportPDFHandler(sessionId, analysisId, feature) {
+        const endpoint = analysisId ? `/explain/a/${analysisId}/export-pdf` : `/explain/${sessionId}/export-pdf`;
+
+        fetch(endpoint, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                const link = document.createElement('a');
+                link.href = data.download_url;
+                link.download = data.filename;
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
+                alert(`PDF exported successfully! (${data.size_mb} MB)`);
+                // Reload page to show new export in list
+                setTimeout(() => location.reload(), 1000);
+            } else {
+                alert('Error exporting PDF: ' + (data.error || 'Unknown error'));
+            }
+        })
+        .catch(error => {
+            console.error('Export error:', error);
+            alert('Error exporting PDF: ' + error.message);
+        });
+    }
+</script>
+{% endblock %}

@@ -1,0 +1,301 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% if register_mode %}Register - Banker Analytics{% else %}Login - Banker Analytics{% endif %}</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen', 'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue', sans-serif;
+            background: linear-gradient(135deg, #0f0f1e 0%, #1a1a2e 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: #e0e0e0;
+        }
+
+        .login-container {
+            width: 100%;
+            max-width: 400px;
+            padding: 20px;
+        }
+
+        .login-card {
+            background: rgba(26, 26, 46, 0.95);
+            border: 1px solid rgba(0, 217, 255, 0.2);
+            border-radius: 12px;
+            padding: 40px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+        }
+
+        .logo {
+            text-align: center;
+            margin-bottom: 30px;
+        }
+
+        .logo h1 {
+            font-size: 28px;
+            font-weight: 300;
+            letter-spacing: 2px;
+            color: #00d9ff;
+            margin-bottom: 8px;
+        }
+
+        .logo p {
+            font-size: 13px;
+            color: #888;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+
+        .form-group {
+            margin-bottom: 20px;
+        }
+
+        label {
+            display: block;
+            font-size: 13px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            margin-bottom: 8px;
+            color: #888;
+            font-weight: 500;
+        }
+
+        input[type="text"],
+        input[type="password"] {
+            width: 100%;
+            padding: 12px 16px;
+            border: 1px solid rgba(0, 217, 255, 0.3);
+            border-radius: 6px;
+            background: rgba(255, 255, 255, 0.05);
+            color: #e0e0e0;
+            font-size: 14px;
+            transition: all 0.3s ease;
+        }
+
+        input[type="text"]:focus,
+        input[type="password"]:focus {
+            outline: none;
+            border-color: #00d9ff;
+            background: rgba(0, 217, 255, 0.1);
+            box-shadow: 0 0 0 3px rgba(0, 217, 255, 0.1);
+        }
+
+        .error {
+            background: rgba(255, 87, 51, 0.1);
+            border: 1px solid rgba(255, 87, 51, 0.3);
+            color: #ff5733;
+            padding: 12px 16px;
+            border-radius: 6px;
+            margin-bottom: 20px;
+            font-size: 13px;
+        }
+
+        .submit-button {
+            width: 100%;
+            padding: 12px 16px;
+            background: linear-gradient(135deg, #00d9ff 0%, #00b8d4 100%);
+            color: #0f0f1e;
+            border: none;
+            border-radius: 6px;
+            font-size: 14px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            margin-top: 10px;
+        }
+
+        .submit-button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 20px rgba(0, 217, 255, 0.3);
+        }
+
+        .submit-button:active {
+            transform: translateY(0);
+        }
+
+        .toggle-mode {
+            text-align: center;
+            margin-top: 20px;
+            padding-top: 20px;
+            border-top: 1px solid rgba(0, 217, 255, 0.1);
+        }
+
+        .toggle-mode a {
+            color: #00d9ff;
+            text-decoration: none;
+            font-size: 13px;
+            transition: all 0.3s ease;
+        }
+
+        .toggle-mode a:hover {
+            text-decoration: underline;
+        }
+
+        .toggle-mode p {
+            color: #888;
+            font-size: 13px;
+            margin-bottom: 10px;
+        }
+
+        .confirmation-group {
+            margin-bottom: 20px;
+        }
+
+        .password-strength {
+            font-size: 12px;
+            color: #888;
+            margin-top: 4px;
+        }
+
+        .password-strength.weak {
+            color: #ff5733;
+        }
+
+        .password-strength.moderate {
+            color: #ffa500;
+        }
+
+        .password-strength.strong {
+            color: #00ff7f;
+        }
+
+        @media (max-width: 480px) {
+            .login-card {
+                padding: 30px 20px;
+            }
+
+            .logo h1 {
+                font-size: 24px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="login-container">
+        <div class="login-card">
+            <div class="logo">
+                <h1>BANKER</h1>
+                <p>Analytics Platform</p>
+            </div>
+
+            {% if error %}
+            <div class="error">
+                {{ error }}
+            </div>
+            {% endif %}
+
+            {% if register_mode %}
+            <form method="post" action="/register">
+                <h2 style="font-size: 18px; margin-bottom: 20px; font-weight: 500;">Create Account</h2>
+
+                <div class="form-group">
+                    <label for="username">Username</label>
+                    <input type="text" id="username" name="username" placeholder="Choose a username" required autofocus>
+                    <div style="font-size: 12px; color: #888; margin-top: 4px;">
+                        At least 3 characters, alphanumeric + underscore
+                    </div>
+                </div>
+
+                <div class="form-group">
+                    <label for="password">Password</label>
+                    <input type="password" id="password" name="password" placeholder="Create a password" required onchange="checkPasswordStrength()">
+                    <div class="password-strength" id="strength">
+                        · At least 8 characters
+                    </div>
+                </div>
+
+                <div class="confirmation-group">
+                    <label for="password_confirm">Confirm Password</label>
+                    <input type="password" id="password_confirm" name="password_confirm" placeholder="Re-enter password" required>
+                </div>
+
+                <button type="submit" class="submit-button">Create Account</button>
+
+                <div class="toggle-mode">
+                    <p>Already have an account?</p>
+                    <a href="/login">Back to Login</a>
+                </div>
+            </form>
+            {% else %}
+            <form method="post" action="/login">
+                <h2 style="font-size: 18px; margin-bottom: 20px; font-weight: 500;">Sign In</h2>
+
+                <div class="form-group">
+                    <label for="username">Username</label>
+                    <input type="text" id="username" name="username" placeholder="Your username" required autofocus>
+                </div>
+
+                <div class="form-group">
+                    <label for="password">Password</label>
+                    <input type="password" id="password" name="password" placeholder="Your password" required>
+                </div>
+
+                <button type="submit" class="submit-button">Sign In</button>
+
+                <div class="toggle-mode">
+                    <p>New to Banker Analytics?</p>
+                    <a href="/register">Create an account</a>
+                </div>
+            </form>
+            {% endif %}
+
+            <div style="text-align: center; margin-top: 30px; padding-top: 20px; border-top: 1px solid rgba(0, 217, 255, 0.1);">
+                <p style="font-size: 12px; color: #666;">
+                    Banker Analytics v3.0 | Local private instance
+                </p>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Handle register mode toggle
+        if (new URLSearchParams(window.location.search).get('mode') === 'register') {
+            // Redirect to show register form
+            const form = document.querySelector('form');
+            if (form && form.action === '/login') {
+                // This is the login page, show register link
+            }
+        }
+
+        function checkPasswordStrength() {
+            const password = document.getElementById('password').value;
+            const strengthDiv = document.getElementById('strength');
+
+            if (password.length === 0) {
+                strengthDiv.textContent = '· At least 8 characters';
+                strengthDiv.className = 'password-strength';
+            } else if (password.length < 8) {
+                strengthDiv.textContent = '· Too short (minimum 8 characters)';
+                strengthDiv.className = 'password-strength weak';
+            } else if (password.length < 12 || !/[A-Z]/.test(password) || !/[0-9]/.test(password)) {
+                strengthDiv.textContent = '✓ Moderate strength (add uppercase + numbers for better security)';
+                strengthDiv.className = 'password-strength moderate';
+            } else {
+                strengthDiv.textContent = '✓ Strong password';
+                strengthDiv.className = 'password-strength strong';
+            }
+        }
+
+        // Add enter key submission
+        document.querySelectorAll('input[type="password"], input[type="text"]').forEach(input => {
+            input.addEventListener('keypress', function(e) {
+                if (e.key === 'Enter') {
+                    e.preventDefault();
+                    document.querySelector('form').submit();
+                }
+            });
+        });
+    </script>
+</body>
+</html>

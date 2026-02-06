@@ -1,0 +1,7 @@
+﻿.venv/
+exports/
+__pycache__/
+*.pyc
+nul
+*.db
+tmpclaude-*

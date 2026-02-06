@@ -1,0 +1,460 @@
+{% extends "base.html" %}
+
+{% block title %}Scenario & Stress Simulator - Banker Analytics{% endblock %}
+
+{% block content %}
+<div class="feature-page">
+    <a href="/" class="back-link">← Back to Hub</a>
+
+    <h1 class="page-title">Scenario & Stress Simulator</h1>
+    <p class="page-subtitle">Apply shocks to rate and balance. Compare scenarios.</p>
+
+    <!-- M3: Analysis Info Card (shown when opened from history) -->
+    {% if analysis_info %}
+    <section class="analysis-info-card">
+        {% if is_from_history %}
+        <div class="history-badge">📋 Opened from Analysis History</div>
+        {% endif %}
+        <div class="info-grid">
+            <div class="info-item">
+                <span class="info-label">Analysis</span>
+                <span class="info-value">{{ analysis_info.filename }}</span>
+            </div>
+            <div class="info-item">
+                <span class="info-label">Uploaded</span>
+                <span class="info-value">{{ analysis_info.uploaded_at | default('N/A') }}</span>
+            </div>
+            <div class="info-item">
+                <span class="info-label">Date Range</span>
+                <span class="info-value">
+                    {% if analysis_info.date_min and analysis_info.date_max %}
+                        {{ analysis_info.date_min }} to {{ analysis_info.date_max }}
+                    {% else %}
+                        N/A
+                    {% endif %}
+                </span>
+            </div>
+            <div class="info-item">
+                <span class="info-label">Rows</span>
+                <span class="info-value">{{ analysis_info.row_count | default('N/A') }}</span>
+            </div>
+        </div>
+    </section>
+    {% endif %}
+
+    <!-- Shock Input Form -->
+    <section class="simulator-section">
+        <h2 class="section-title">Configure Scenario</h2>
+        <div class="card form-card">
+            <form id="simulatorForm" method="POST">
+                <div class="form-row">
+                    <div class="form-group">
+                        <label><strong>Interest Rate Shock</strong></label>
+                        <div class="radio-group">
+                            <label class="radio-label">
+                                <input type="radio" name="rate_shock" value="100" checked>
+                                +100 bps (↑1.0%)
+                            </label>
+                            <label class="radio-label">
+                                <input type="radio" name="rate_shock" value="-100">
+                                -100 bps (↓1.0%)
+                            </label>
+                            <label class="radio-label">
+                                <input type="radio" name="rate_shock" value="0">
+                                No Rate Shock
+                            </label>
+                        </div>
+                    </div>
+
+                    <div class="form-group">
+                        <label><strong>Balance Shock</strong></label>
+                        <div class="radio-group">
+                            <label class="radio-label">
+                                <input type="radio" name="balance_shock" value="5" checked>
+                                +5% (↑ balance)
+                            </label>
+                            <label class="radio-label">
+                                <input type="radio" name="balance_shock" value="-5">
+                                -5% (↓ balance)
+                            </label>
+                            <label class="radio-label">
+                                <input type="radio" name="balance_shock" value="0">
+                                No Balance Shock
+                            </label>
+                        </div>
+                    </div>
+                </div>
+
+                <button type="submit" class="btn-primary" style="margin-top: 20px;">
+                    Run Scenario
+                </button>
+            </form>
+        </div>
+    </section>
+
+    <!-- Results Section (conditionally shown) -->
+    {% if results %}
+    <section class="simulator-section">
+        <h2 class="section-title">Scenario Results</h2>
+
+        <!-- Comparison Charts -->
+        {% if rate_shock_chart %}
+        <div class="card chart-card">
+            <h3>Rate Shock Comparison</h3>
+            {{ rate_shock_chart | safe }}
+        </div>
+        {% endif %}
+
+        {% if balance_shock_chart %}
+        <div class="card chart-card">
+            <h3>Balance Shock Comparison</h3>
+            {{ balance_shock_chart | safe }}
+        </div>
+        {% endif %}
+
+        <!-- Impact Table -->
+        {% if impact_table %}
+        <div class="card impact-card">
+            <h3>Impact Summary</h3>
+            {{ impact_table | safe }}
+        </div>
+        {% endif %}
+    </section>
+    {% endif %}
+
+    <!-- M3: Previous Exports Section (shown when from history) -->
+    {% if exports %}
+    <section class="simulator-section">
+        <h2 class="section-title">📥 Previous Exports</h2>
+        <div class="exports-list">
+            {% for export in exports %}
+            <div class="export-item">
+                <div class="export-info">
+                    <span class="export-kind">
+                        {% if export.report_kind == 'snapshot_pdf' %}
+                        📊 Snapshot Report
+                        {% elif export.report_kind == 'simulator_pdf' %}
+                        ⚡ Simulator Report
+                        {% elif export.report_kind == 'explain_pdf' %}
+                        💡 Explanation Report
+                        {% else %}
+                        {{ export.report_kind | replace('_', ' ') | title }}
+                        {% endif %}
+                    </span>
+                    <span class="export-meta">
+                        Exported {{ export.created_at | default('Unknown') }} •
+                        {% if export.file_size %}
+                            {{ (export.file_size / 1024) | round | int }} KB
+                        {% else %}
+                            Unknown size
+                        {% endif %}
+                    </span>
+                </div>
+                <a href="/exports/{{ export.file_path.split('/')[-1] }}" class="btn-download" title="Download PDF">
+                    ⬇ Download
+                </a>
+            </div>
+            {% endfor %}
+        </div>
+    </section>
+    {% endif %}
+
+    <!-- Related Features -->
+    <section class="simulator-section">
+        <h2 class="section-title">Next Steps</h2>
+        <div class="related-features">
+            {% if results %}
+            <button class="btn-export-pdf" onclick="exportPDFHandler('{{ session_id }}', '{{ analysis_id }}', 'simulator', {{ results | tojson }})">
+                📄 Export PDF
+            </button>
+            {% endif %}
+            <a href="/snapshot/{{ route_prefix }}{{ route_id }}" class="btn-feature">
+                📊 View Snapshot
+            </a>
+            <a href="/explain/{{ route_prefix }}{{ route_id }}" class="btn-feature">
+                💡 Get Explanation
+            </a>
+        </div>
+    </section>
+</div>
+
+<style>
+    .analysis-info-card {
+        background: linear-gradient(135deg, rgba(0, 217, 255, 0.1) 0%, rgba(0, 217, 255, 0.05) 100%);
+        border: 1px solid rgba(0, 217, 255, 0.2);
+        border-radius: 8px;
+        padding: 20px;
+        margin-bottom: 30px;
+    }
+
+    .history-badge {
+        display: inline-block;
+        background: rgba(0, 217, 255, 0.2);
+        color: #00d9ff;
+        padding: 6px 12px;
+        border-radius: 4px;
+        font-size: 12px;
+        font-weight: 600;
+        margin-bottom: 15px;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+    }
+
+    .info-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+        gap: 15px;
+    }
+
+    .info-item {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+    }
+
+    .info-label {
+        font-size: 12px;
+        color: #808090;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        font-weight: 600;
+    }
+
+    .info-value {
+        font-size: 14px;
+        color: #e0e0e0;
+        font-weight: 500;
+    }
+
+    .exports-list {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+    }
+
+    .export-item {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 12px;
+        background: rgba(0, 217, 255, 0.05);
+        border-left: 3px solid rgba(0, 217, 255, 0.3);
+        border-radius: 4px;
+    }
+
+    .export-info {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+    }
+
+    .export-kind {
+        color: #00d9ff;
+        font-weight: 600;
+        font-size: 13px;
+    }
+
+    .export-meta {
+        color: #808090;
+        font-size: 11px;
+    }
+
+    .btn-download {
+        background: linear-gradient(135deg, rgba(0, 217, 255, 0.2) 0%, rgba(0, 217, 255, 0.1) 100%);
+        color: #00d9ff;
+        border: 1px solid rgba(0, 217, 255, 0.4);
+        padding: 6px 12px;
+        border-radius: 4px;
+        text-decoration: none;
+        font-size: 12px;
+        font-weight: 600;
+        transition: all 0.2s ease;
+        cursor: pointer;
+        white-space: nowrap;
+    }
+
+    .btn-download:hover {
+        background: linear-gradient(135deg, rgba(0, 217, 255, 0.3) 0%, rgba(0, 217, 255, 0.2) 100%);
+        border-color: #00d9ff;
+    }
+
+    .form-row {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 30px;
+        margin-bottom: 20px;
+    }
+
+    @media (max-width: 768px) {
+        .form-row {
+            grid-template-columns: 1fr;
+        }
+
+        .info-grid {
+            grid-template-columns: 1fr;
+        }
+
+        .export-item {
+            flex-direction: column;
+            align-items: flex-start;
+        }
+
+        .btn-download {
+            align-self: flex-start;
+        }
+    }
+
+    .form-group {
+        display: flex;
+        flex-direction: column;
+    }
+
+    .form-group label {
+        color: #00d9ff;
+        margin-bottom: 12px;
+        font-size: 15px;
+    }
+
+    .radio-group {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+    }
+
+    .radio-label {
+        display: flex;
+        align-items: center;
+        cursor: pointer;
+        color: #b0b0c0;
+        font-weight: 400;
+        padding: 8px;
+        border-radius: 6px;
+        transition: background 0.2s;
+    }
+
+    .radio-label:hover {
+        background: rgba(0, 217, 255, 0.1);
+        color: #e0e0e0;
+    }
+
+    .radio-label input[type="radio"] {
+        margin-right: 10px;
+        cursor: pointer;
+    }
+
+    .chart-card {
+        margin-bottom: 20px;
+        padding: 20px;
+    }
+
+    .chart-card h3 {
+        color: #00d9ff;
+        margin-bottom: 15px;
+        font-size: 18px;
+    }
+
+    .impact-card {
+        overflow-x: auto;
+    }
+
+    .impact-card h3 {
+        color: #00d9ff;
+        margin-bottom: 15px;
+        font-size: 18px;
+    }
+
+    .impact-table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 14px;
+    }
+
+    .impact-table th {
+        background: rgba(0, 217, 255, 0.15);
+        color: #00d9ff;
+        padding: 12px;
+        text-align: left;
+        font-weight: 600;
+        border-bottom: 2px solid rgba(0, 217, 255, 0.3);
+    }
+
+    .impact-table td {
+        padding: 10px 12px;
+        border-bottom: 1px solid rgba(0, 217, 255, 0.1);
+        color: #e0e0e0;
+    }
+
+    .impact-table tr:hover {
+        background: rgba(0, 217, 255, 0.05);
+    }
+
+    .impact-table .positive {
+        color: #00FF7F;
+        font-weight: 600;
+    }
+
+    .impact-table .negative {
+        color: #FF6464;
+        font-weight: 600;
+    }
+
+    .impact-table .neutral {
+        color: #FFB700;
+    }
+
+    .related-features {
+        display: flex;
+        gap: 15px;
+        margin-top: 15px;
+    }
+
+    .related-features .btn-feature {
+        flex: 1;
+        padding: 12px 20px;
+        text-align: center;
+    }
+</style>
+
+<script>
+    function exportPDFHandler(sessionId, analysisId, feature, results) {
+        const endpoint = analysisId ? `/simulator/a/${analysisId}/export-pdf` : `/simulator/${sessionId}/export-pdf`;
+
+        // Get form values for shocks
+        const form = document.getElementById('simulatorForm');
+        const rateShock = form ? form.querySelector('input[name="rate_shock"]:checked')?.value || 0 : 0;
+        const balanceShock = form ? form.querySelector('input[name="balance_shock"]:checked')?.value || 0 : 0;
+
+        const url = new URL(endpoint, window.location.origin);
+        url.searchParams.append('rate_shock', rateShock);
+        url.searchParams.append('balance_shock', balanceShock);
+
+        fetch(url.toString(), {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                const link = document.createElement('a');
+                link.href = data.download_url;
+                link.download = data.filename;
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
+                alert(`PDF exported successfully! (${data.size_mb} MB)`);
+                // Reload page to show new export in list
+                setTimeout(() => location.reload(), 1000);
+            } else {
+                alert('Error exporting PDF: ' + (data.error || 'Unknown error'));
+            }
+        })
+        .catch(error => {
+            console.error('Export error:', error);
+            alert('Error exporting PDF: ' + error.message);
+        });
+    }
+</script>
+{% endblock %}

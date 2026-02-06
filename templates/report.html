@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Analysis Report</title>
+    <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+    <div class="header-bar">
+        <h1>Banker Analytics</h1>
+    </div>
+
+    <div class="container">
+        <a href="/" class="back-link">← Back to Dashboard</a>
+
+        <div class="card chart-card">
+            {{ chart | safe }}
+        </div>
+
+        <div class="card">
+            <h2>Data Preview (First 10 Rows)</h2>
+            {{ preview | safe }}
+        </div>
+
+        <div class="card">
+            <h2>Summary Statistics</h2>
+            {{ stats | safe }}
+        </div>
+
+        <div class="info-box">
+            <p>✓ Processed {{ rows_processed }} rows successfully</p>
+        </div>
+    </div>
+</body>
+</html>

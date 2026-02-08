@@ -59,6 +59,28 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+
+# =============================================================================
+# M3.75 Phase B: Audit Helpers
+# =============================================================================
+
+def get_client_ip(request: Request) -> str | None:
+    """Extract client IP from X-Forwarded-For header or request.client.host."""
+    forwarded = request.headers.get("x-forwarded-for")
+    if forwarded:
+        return forwarded.split(",")[0].strip()
+    if request.client:
+        return request.client.host
+    return None
+
+
+def safe_json_dumps(obj) -> str:
+    """JSON-serialize with fallback for non-serializable types. Never raises."""
+    try:
+        return json.dumps(obj, default=str)
+    except Exception:
+        return '{"error":"serialization_failed"}'
+
 # FastAPI Setup
 app = FastAPI(title="Banker Analytics", version="3.0")
 BASE_DIR = Path(__file__).resolve().parent
@@ -160,8 +182,9 @@ async def policy_violation_handler(request: Request, exc: PolicyViolation):
         db=db,
         user_id=user_id,
         event_kind="policy_violation",
-        details_json=json.dumps({"rule": exc.rule, "detail": exc.detail}),
+        details_json=safe_json_dumps({"rule": exc.rule, "detail": exc.detail, "context": exc.context}),
         request_id=getattr(request.state, "request_id", None),
+        ip_address=get_client_ip(request),
     )
 
     if request.url.path.startswith("/api/"):
@@ -293,8 +316,9 @@ async def login(request: Request, username: str = "", password: str = ""):
             # M3.75: Audit login failure
             policy_log_event(
                 db=db, user_id=None, event_kind="login_failure",
-                details_json=json.dumps({"username": username}),
+                details_json=safe_json_dumps({"username": username}),
                 request_id=getattr(request.state, "request_id", None),
+                ip_address=get_client_ip(request),
             )
             return templates.TemplateResponse(
                 "login.html",
@@ -311,8 +335,9 @@ async def login(request: Request, username: str = "", password: str = ""):
         # M3.75: Audit login success
         policy_log_event(
             db=db, user_id=user_id, event_kind="login_success",
-            details_json=json.dumps({"username": username}),
+            details_json=safe_json_dumps({"username": username}),
             request_id=getattr(request.state, "request_id", None),
+            ip_address=get_client_ip(request),
         )
 
         return response
@@ -405,8 +430,9 @@ async def register(request: Request):
         # M3.75: Audit registration
         policy_log_event(
             db=db, user_id=user_id, event_kind="register",
-            details_json=json.dumps({"username": username}),
+            details_json=safe_json_dumps({"username": username}),
             request_id=getattr(request.state, "request_id", None),
+            ip_address=get_client_ip(request),
         )
 
         # Auto-login after successful registration
@@ -632,9 +658,10 @@ async def upload(request: Request, file: UploadFile = File(...)):
                             db=db,
                             user_id=current_user["user_id"],
                             event_kind="trend_compute_failure",
-                            details_json=json.dumps({"error": str(e), "analysis_id": analysis_id}),
+                            details_json=safe_json_dumps({"error": str(e), "analysis_id": analysis_id}),
                             analysis_id=analysis_id,
                             request_id=getattr(request.state, "request_id", None),
+                            ip_address=get_client_ip(request),
                         )
 
                     response_data["analysis_id"] = analysis_id
@@ -649,13 +676,14 @@ async def upload(request: Request, file: UploadFile = File(...)):
             db=db,
             user_id=current_user["user_id"] if current_user else None,
             event_kind="upload",
-            details_json=json.dumps({
+            details_json=safe_json_dumps({
                 "filename": file.filename,
                 "row_count": len(df_clean),
                 "analysis_id": response_data.get("analysis_id"),
             }),
             session_id=session_id,
             request_id=getattr(request.state, "request_id", None),
+            ip_address=get_client_ip(request),
         )
 
         return JSONResponse(response_data, status_code=200)
@@ -1480,9 +1508,10 @@ async def export_snapshot_pdf(request: Request, session_id: str, analysis_id: in
                     db=db,
                     user_id=current_user["user_id"] if current_user else None,
                     event_kind="export_record_failed",
-                    details_json=json.dumps({"error": str(e), "analysis_id": analysis_id, "kind": "snapshot_pdf"}),
+                    details_json=safe_json_dumps({"error": str(e), "analysis_id": analysis_id, "kind": "snapshot_pdf"}),
                     analysis_id=analysis_id,
                     request_id=getattr(request.state, "request_id", None),
+                    ip_address=get_client_ip(request),
                 )
 
         # M3.75: Audit export success
@@ -1490,9 +1519,10 @@ async def export_snapshot_pdf(request: Request, session_id: str, analysis_id: in
             db=db,
             user_id=current_user["user_id"] if current_user else None,
             event_kind="export_pdf",
-            details_json=json.dumps({"kind": "snapshot_pdf", "session_id": session_id}),
+            details_json=safe_json_dumps({"kind": "snapshot_pdf", "session_id": session_id}),
             session_id=session_id,
             request_id=getattr(request.state, "request_id", None),
+            ip_address=get_client_ip(request),
         )
 
         # Return download link
@@ -1721,6 +1751,15 @@ async def export_snapshot_analysis_pdf(request: Request, analysis_id: int):
             raise HTTPException(status_code=404, detail="Analysis file not found")
 
         parquet_path = BASE_DIR / analysis_file["stored_path"]
+
+        # M3.75 Phase C: Policy guard for persistent export
+        policy_guard({
+            "route": "/snapshot/a/export-pdf",
+            "mode": "persistent",
+            "user_id": user_id,
+            "analysis_id": analysis_id,
+        })
+
         df = pd.read_parquet(str(parquet_path))
 
         # Compute KPIs and generate PDF
@@ -1763,7 +1802,7 @@ async def export_snapshot_analysis_pdf(request: Request, analysis_id: int):
             "export_id": export_record_id,
         })
 
-    except HTTPException:
+    except (HTTPException, PolicyViolation):
         raise
     except Exception as e:
         logger.error(f"Snapshot analysis PDF export error: {str(e)}")
@@ -1796,6 +1835,15 @@ async def export_simulator_analysis_pdf(
             raise HTTPException(status_code=404, detail="Analysis file not found")
 
         parquet_path = BASE_DIR / analysis_file["stored_path"]
+
+        # M3.75 Phase C: Policy guard for persistent export
+        policy_guard({
+            "route": "/simulator/a/export-pdf",
+            "mode": "persistent",
+            "user_id": user_id,
+            "analysis_id": analysis_id,
+        })
+
         df = pd.read_parquet(str(parquet_path))
 
         # Compute baseline KPIs
@@ -1866,7 +1914,7 @@ async def export_simulator_analysis_pdf(
             "export_id": export_record_id,
         })
 
-    except HTTPException:
+    except (HTTPException, PolicyViolation):
         raise
     except Exception as e:
         logger.error(f"Simulator analysis PDF export error: {str(e)}")
@@ -1897,6 +1945,15 @@ async def export_explain_analysis_pdf(request: Request, analysis_id: int):
             raise HTTPException(status_code=404, detail="Analysis file not found")
 
         parquet_path = BASE_DIR / analysis_file["stored_path"]
+
+        # M3.75 Phase C: Policy guard for persistent export
+        policy_guard({
+            "route": "/explain/a/export-pdf",
+            "mode": "persistent",
+            "user_id": user_id,
+            "analysis_id": analysis_id,
+        })
+
         df = pd.read_parquet(str(parquet_path))
 
         # Generate explanation
@@ -1938,7 +1995,7 @@ async def export_explain_analysis_pdf(request: Request, analysis_id: int):
             "export_id": export_record_id,
         })
 
-    except HTTPException:
+    except (HTTPException, PolicyViolation):
         raise
     except Exception as e:
         logger.error(f"Explain analysis PDF export error: {str(e)}")
@@ -1963,8 +2020,9 @@ async def download_pdf(request: Request, filename: str):
             db=db,
             user_id=current_user["user_id"] if current_user else None,
             event_kind="download_pdf",
-            details_json=json.dumps({"filename": filename}),
+            details_json=safe_json_dumps({"filename": filename}),
             request_id=getattr(request.state, "request_id", None),
+            ip_address=get_client_ip(request),
         )
 
         return FileResponse(
@@ -2034,6 +2092,14 @@ async def api_explain_analysis(request: Request, analysis_id: int):
             {"detail": "Analysis data file not found on disk"}, status_code=404
         )
 
+    # M3.75 Phase C: Policy guard for persistent explain access
+    policy_guard({
+        "route": "/api/analyses/explain",
+        "mode": "persistent",
+        "user_id": user_id,
+        "analysis_id": analysis_id,
+    })
+
     df = pd.read_parquet(str(parquet_path))
     explanation = generate_full_explanation(df)
 
@@ -2044,12 +2110,13 @@ async def api_explain_analysis(request: Request, analysis_id: int):
         db=db,
         user_id=user_id,
         event_kind="api_explain",
-        details_json=json.dumps({
+        details_json=safe_json_dumps({
             "analysis_id": analysis_id,
             "rules_fired": rules_fired,
         }),
         analysis_id=analysis_id,
         request_id=getattr(request.state, "request_id", None),
+        ip_address=get_client_ip(request),
     )
 
     return JSONResponse({

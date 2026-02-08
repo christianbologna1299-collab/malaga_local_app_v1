@@ -5,3 +5,9 @@ __pycache__/
 nul
 *.db
 tmpclaude-*
+# Runtime / local artifacts
+data/
+exports/
+*.db
+*.db-wal
+*.db-shm

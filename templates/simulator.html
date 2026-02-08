@@ -164,7 +164,7 @@
         <h2 class="section-title">Next Steps</h2>
         <div class="related-features">
             {% if results %}
-            <button class="btn-export-pdf" onclick="exportPDFHandler('{{ session_id }}', '{{ analysis_id }}', 'simulator', {{ results | tojson }})">
+            <button class="btn-export-pdf" onclick="exportPDFHandler('{{ session_id }}', '{{ analysis_id }}', 'simulator')">
                 📄 Export PDF
             </button>
             {% endif %}
@@ -417,7 +417,7 @@
 </style>
 
 <script>
-    function exportPDFHandler(sessionId, analysisId, feature, results) {
+    function exportPDFHandler(sessionId, analysisId, feature) {
         const endpoint = analysisId ? `/simulator/a/${analysisId}/export-pdf` : `/simulator/${sessionId}/export-pdf`;
 
         // Get form values for shocks

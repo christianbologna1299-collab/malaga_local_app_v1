@@ -273,6 +273,44 @@ class Database:
                 """
             )
 
+            # ===== M3.75: AUDIT EVENTS TABLE =====
+
+            cursor.execute(
+                """
+                CREATE TABLE IF NOT EXISTS audit_events (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    user_id INTEGER,
+                    event_kind TEXT NOT NULL,
+                    details_json TEXT,
+                    analysis_id INTEGER,
+                    session_id TEXT,
+                    request_id TEXT,
+                    ip_address TEXT
+                )
+                """
+            )
+
+            cursor.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_audit_events_user_id
+                ON audit_events(user_id)
+                """
+            )
+
+            cursor.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_audit_events_event_kind
+                ON audit_events(event_kind)
+                """
+            )
+
+            cursor.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_audit_events_timestamp
+                ON audit_events(timestamp)
+                """
+            )
 
             conn.commit()
             logger.debug("Schema initialized successfully")

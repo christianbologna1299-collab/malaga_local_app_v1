@@ -1655,6 +1655,45 @@ async def export_simulator_pdf(
         )
 
 
+# M4.00 Phase A: Excel export route (session-mode simulator)
+@app.post("/simulator/{session_id}/export-xlsx")
+async def export_simulator_xlsx(request: Request, session_id: str):
+    """Export simulator results to Excel workbook. Session mode only (Phase A)."""
+    try:
+        logger.info(f"POST /simulator/{session_id}/export-xlsx")
+        session = session_manager.get_session(session_id)
+
+        if not session:
+            logger.warning(f"Session not found for xlsx export: {session_id}")
+            raise HTTPException(
+                status_code=404, detail="Session expired or not found"
+            )
+
+        from features.excel_export import build_excel_workbook
+
+        filepath = build_excel_workbook(
+            mode="session",
+            feature="simulator",
+            session_id=session_id,
+            request=request,
+        )
+
+        filename = Path(filepath).name
+        return FileResponse(
+            path=filepath,
+            filename=filename,
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Simulator Excel export error: {str(e)}")
+        return JSONResponse(
+            {"success": False, "error": str(e)}, status_code=500
+        )
+
+
 @app.post("/explain/{session_id}/export-pdf")
 async def export_explain_pdf(request: Request, session_id: str, analysis_id: int = None):
     """Export Explain page to PDF. M3: Create export record if analysis_id provided."""

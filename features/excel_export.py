@@ -1,20 +1,19 @@
 """
-M4.01 Phase B1: Excel Export Engine — Formula-Driven Amortization.
+M4.01 Phase B2: Excel Export Engine — Executive Summary + Scenario Deltas.
 
 Produces a banker-grade interactive .xlsx workbook with:
-  - Overview, Loan Inputs, Amortization, Scenarios, Charts sheets
-  - Named ranges, data validation dropdowns, freeze panes
-  - Dark header strip (printable body), currency/percent formatting
-  - Formula-driven amortization: inputs change → schedule recalculates
-  - Derived values (Periods/Year, Periodic Rate, Total Periods, Payment)
-  - 360-row IF-guarded formula grid with zebra striping
+  - Overview (Executive Summary): formula-driven loan summary, KPIs, static snapshot
+  - Loan Inputs: user-editable inputs + derived values (B1)
+  - Amortization: 360-row IF-guarded formula grid with zebra striping (B1)
+  - Scenarios: interactive Base vs Shocked comparison with formula-driven deltas (B2)
+  - Charts: placeholder for B3
 
 Entry point: build_excel_workbook(...)
 """
 
 import logging
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, date
 from pathlib import Path
 from typing import Literal
@@ -104,6 +103,15 @@ class SeriesData:
     rates: list[float]
 
 
+@dataclass
+class ExportMeta:
+    """Static metadata captured at export time for the Export Snapshot block."""
+    session_id: str | None = None
+    data_points: int = 0
+    source_filename: str | None = None
+    timestamp: str | None = None  # auto-filled at build time if None
+
+
 # =============================================================================
 # Formatting constants
 # =============================================================================
@@ -128,9 +136,28 @@ _DATE_FMT = 'YYYY-MM-DD'
 _RATE_PRECISE_FMT = '0.000000%'
 _MAX_AMORT_ROWS = 360
 
+# B2: executive summary + scenario deltas
+_SECTION_FILL = PatternFill(start_color="E8ECF1", end_color="E8ECF1", fill_type="solid")
+_SECTION_FONT = Font(name="Calibri", bold=True, size=10, color="1B2A4A")
+_DELTA_CURRENCY_FMT = '+#,##0.00;-#,##0.00;0.00'
+_DELTA_PERCENT_FMT = '+0.00%;-0.00%;0.00%'
+
+# Layout constants (row numbers)
+_OV_LOAN_SUMMARY_ROW = 3
+_OV_LOAN_DATA_START = 4
+_OV_KPI_SECTION_ROW = 11
+_OV_KPI_DATA_START = 12
+_OV_SNAPSHOT_SECTION_ROW = 17
+_OV_SNAPSHOT_DATA_START = 18
+
+_SC_INPUT_SECTION_ROW = 3
+_SC_INPUT_DATA_START = 4
+_SC_GRID_HEADER_ROW = 7
+_SC_GRID_DATA_START = 8
+
 
 # =============================================================================
-# Skeleton workbook builder
+# Shared helpers
 # =============================================================================
 
 def _apply_header_row(ws, columns: list[str], row: int = 1):
@@ -143,23 +170,252 @@ def _apply_header_row(ws, columns: list[str], row: int = 1):
         cell.border = _THIN_BORDER
 
 
+def _apply_section_label(ws, row: int, text: str, merge_end_col: str = "B"):
+    """Apply a section subheader with fill across columns A:merge_end_col."""
+    cell = ws.cell(row=row, column=1, value=text)
+    cell.font = _SECTION_FONT
+    cell.fill = _SECTION_FILL
+    cell.border = _THIN_BORDER
+    ws.merge_cells(f"A{row}:{merge_end_col}{row}")
+    # Apply fill to merged area (openpyxl only styles the top-left)
+    merge_col_end = ord(merge_end_col) - ord("A") + 1
+    for c in range(2, merge_col_end + 1):
+        mcell = ws.cell(row=row, column=c)
+        mcell.fill = _SECTION_FILL
+        mcell.border = _THIN_BORDER
+
+
+def _label_value_row(ws, row: int, label: str, value, fmt: str | None = None,
+                     num_cols: int = 2):
+    """Write a label/value row with standard formatting."""
+    ws.cell(row=row, column=1, value=label).font = _LABEL_FONT
+    val_cell = ws.cell(row=row, column=2, value=value)
+    val_cell.font = _BODY_FONT
+    if fmt:
+        val_cell.number_format = fmt
+    for c in range(1, num_cols + 1):
+        ws.cell(row=row, column=c).border = _THIN_BORDER
+
+
+# =============================================================================
+# B2: Overview sheet builder (Executive Summary)
+# =============================================================================
+
+def _build_overview_sheet(ws, meta: ExportMeta | None):
+    """
+    Build the Overview sheet as an Executive Summary with three sections:
+    1. Loan Summary — formula refs to named ranges (updates with inputs)
+    2. Computed KPIs — formula-driven from amortization data
+    3. Export Snapshot — static values captured at export time
+    """
+    meta = meta or ExportMeta()
+
+    # Title
+    _apply_header_row(ws, ["Banker Analytics — Executive Summary"], row=1)
+    ws.merge_cells("A1:D1")
+    ws.cell(row=1, column=1).alignment = Alignment(horizontal="center")
+
+    # ---- Section 1: Loan Summary (formula-driven) ----
+    _apply_section_label(ws, _OV_LOAN_SUMMARY_ROW, "LOAN SUMMARY")
+
+    loan_summary_rows = [
+        # (row, label, formula, format)
+        (_OV_LOAN_DATA_START,     "Principal",      "=Loan_Principal",     _CURRENCY_FMT),
+        (_OV_LOAN_DATA_START + 1, "Rate (APR)",     "=Loan_Rate",          _PERCENT_FMT),
+        (_OV_LOAN_DATA_START + 2, "Term (Months)",  "=Loan_Term_Months",   _BPS_FMT),
+        (_OV_LOAN_DATA_START + 3, "Frequency",      "=Loan_Frequency",     None),
+        (_OV_LOAN_DATA_START + 4, "Start Date",     "=Loan_Start_Date",    _DATE_FMT),
+        (_OV_LOAN_DATA_START + 5, "Payment",        "=Payment",            _CURRENCY_FMT),
+    ]
+    for row, label, formula, fmt in loan_summary_rows:
+        _label_value_row(ws, row, label, formula, fmt)
+
+    # ---- Section 2: Computed KPIs (formula-driven) ----
+    _apply_section_label(ws, _OV_KPI_SECTION_ROW, "COMPUTED KPIs")
+
+    kpi_rows = [
+        (_OV_KPI_DATA_START,     "Total Payments",
+         "=Payment*Num_Periods", _CURRENCY_FMT),
+        (_OV_KPI_DATA_START + 1, "Total Interest",
+         "=Payment*Num_Periods-Loan_Principal", _CURRENCY_FMT),
+        (_OV_KPI_DATA_START + 2, "Ending Balance",
+         "=INDEX('Amortization'!F:F,Num_Periods+2)", _CURRENCY_FMT),
+        (_OV_KPI_DATA_START + 3, "Total Principal Paid",
+         "=Loan_Principal-B14", _CURRENCY_FMT),
+    ]
+    for row, label, formula, fmt in kpi_rows:
+        _label_value_row(ws, row, label, formula, fmt)
+
+    # ---- Section 3: Export Snapshot (static) ----
+    _apply_section_label(ws, _OV_SNAPSHOT_SECTION_ROW, "EXPORT SNAPSHOT")
+
+    ts = meta.timestamp or datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    sid = meta.session_id or "N/A"
+    src = meta.source_filename or "Session export"
+
+    snapshot_rows = [
+        (_OV_SNAPSHOT_DATA_START,     "Report Generated", ts,               None),
+        (_OV_SNAPSHOT_DATA_START + 1, "Session ID",       sid,              None),
+        (_OV_SNAPSHOT_DATA_START + 2, "Data Points",      meta.data_points, _BPS_FMT),
+        (_OV_SNAPSHOT_DATA_START + 3, "Source",           src,              None),
+    ]
+    for row, label, value, fmt in snapshot_rows:
+        _label_value_row(ws, row, label, value, fmt)
+
+    # Column widths
+    ws.column_dimensions["A"].width = 24
+    ws.column_dimensions["B"].width = 24
+
+
+# =============================================================================
+# B2: Scenarios sheet builder (Interactive Comparison)
+# =============================================================================
+
+def _build_scenarios_sheet(ws, scenario: ScenarioConfig, wb: Workbook):
+    """
+    Build the Scenarios sheet with interactive Base vs Shocked comparison.
+    Adds 5 named ranges to the workbook.
+    """
+    # Title
+    _apply_header_row(ws, ["Scenario Analysis"], row=1)
+    ws.merge_cells("A1:D1")
+    ws.cell(row=1, column=1).alignment = Alignment(horizontal="center")
+
+    # ---- Section 1: Scenario Inputs ----
+    _apply_section_label(ws, _SC_INPUT_SECTION_ROW, "SCENARIO INPUTS")
+
+    # Rate Shock (bps) — default from scenario config
+    _label_value_row(ws, _SC_INPUT_DATA_START, "Rate Shock (bps)",
+                     scenario.rate_shock_bps, _BPS_FMT)
+    # Balance Shock (%) — default from scenario config
+    _label_value_row(ws, _SC_INPUT_DATA_START + 1, "Balance Shock (%)",
+                     scenario.balance_shock_pct, _BPS_FMT)
+
+    # Expanded dropdowns (B2 upgrade)
+    dv_rate = DataValidation(
+        type="list",
+        formula1='"-200,-100,0,100,200"',
+        allow_blank=False,
+    )
+    dv_rate.prompt = "Select rate shock in basis points"
+    dv_rate.promptTitle = "Rate Shock"
+    ws.add_data_validation(dv_rate)
+    dv_rate.add(f"B{_SC_INPUT_DATA_START}")
+
+    dv_bal = DataValidation(
+        type="list",
+        formula1='"-10,-5,0,5,10"',
+        allow_blank=False,
+    )
+    dv_bal.prompt = "Select balance shock percentage"
+    dv_bal.promptTitle = "Balance Shock"
+    ws.add_data_validation(dv_bal)
+    dv_bal.add(f"B{_SC_INPUT_DATA_START + 1}")
+
+    # Named ranges for inputs
+    input_names = {
+        "Rate_Shock_BPS": f"'Scenarios'!$B${_SC_INPUT_DATA_START}",
+        "Balance_Shock_Pct": f"'Scenarios'!$B${_SC_INPUT_DATA_START + 1}",
+    }
+    for name, ref in input_names.items():
+        wb.defined_names.add(DefinedName(name, attr_text=ref))
+
+    # ---- Section 2: Comparison Grid ----
+    # Header row
+    grid_headers = ["Metric", "Base Case", "Shocked Case", "Delta"]
+    for col_idx, col_name in enumerate(grid_headers, start=1):
+        cell = ws.cell(row=_SC_GRID_HEADER_ROW, column=col_idx, value=col_name)
+        cell.font = _LABEL_FONT
+        cell.fill = _SECTION_FILL
+        cell.border = _THIN_BORDER
+        cell.alignment = Alignment(horizontal="center")
+
+    # Grid data rows
+    # Row layout: (row, metric, base_formula, shocked_formula, delta_formula, base_fmt, shocked_fmt, delta_fmt)
+    r = _SC_GRID_DATA_START
+    grid_rows = [
+        (r, "Principal",
+         "=Loan_Principal",
+         "=Loan_Principal*(1+Balance_Shock_Pct/100)",
+         f"=C{r}-B{r}",
+         _CURRENCY_FMT, _CURRENCY_FMT, _DELTA_CURRENCY_FMT),
+        (r + 1, "Rate (APR)",
+         "=Loan_Rate",
+         "=Loan_Rate+Rate_Shock_BPS/10000",
+         f"=C{r+1}-B{r+1}",
+         _PERCENT_FMT, _PERCENT_FMT, _DELTA_PERCENT_FMT),
+        (r + 2, "Payment",
+         "=Payment",
+         "=-PMT(Shocked_Rate/Periods_Per_Year,Num_Periods,Shocked_Principal)",
+         f"=C{r+2}-B{r+2}",
+         _CURRENCY_FMT, _CURRENCY_FMT, _DELTA_CURRENCY_FMT),
+        (r + 3, "Total Payments",
+         "=Payment*Num_Periods",
+         "=Shocked_Payment*Num_Periods",
+         f"=C{r+3}-B{r+3}",
+         _CURRENCY_FMT, _CURRENCY_FMT, _DELTA_CURRENCY_FMT),
+        (r + 4, "Total Interest",
+         "=Payment*Num_Periods-Loan_Principal",
+         "=Shocked_Payment*Num_Periods-Shocked_Principal",
+         f"=C{r+4}-B{r+4}",
+         _CURRENCY_FMT, _CURRENCY_FMT, _DELTA_CURRENCY_FMT),
+    ]
+
+    for row, metric, base_f, shock_f, delta_f, base_fmt, shock_fmt, delta_fmt in grid_rows:
+        ws.cell(row=row, column=1, value=metric).font = _LABEL_FONT
+        ws.cell(row=row, column=1).border = _THIN_BORDER
+
+        base_cell = ws.cell(row=row, column=2, value=base_f)
+        base_cell.font = _BODY_FONT
+        base_cell.number_format = base_fmt
+        base_cell.border = _THIN_BORDER
+
+        shock_cell = ws.cell(row=row, column=3, value=shock_f)
+        shock_cell.font = _BODY_FONT
+        shock_cell.number_format = shock_fmt
+        shock_cell.border = _THIN_BORDER
+
+        delta_cell = ws.cell(row=row, column=4, value=delta_f)
+        delta_cell.font = _BODY_FONT
+        delta_cell.number_format = delta_fmt
+        delta_cell.border = _THIN_BORDER
+
+    # Named ranges for shocked calculations
+    calc_names = {
+        "Shocked_Principal": f"'Scenarios'!$C${_SC_GRID_DATA_START}",
+        "Shocked_Rate": f"'Scenarios'!$C${_SC_GRID_DATA_START + 1}",
+        "Shocked_Payment": f"'Scenarios'!$C${_SC_GRID_DATA_START + 2}",
+    }
+    for name, ref in calc_names.items():
+        wb.defined_names.add(DefinedName(name, attr_text=ref))
+
+    # Column widths
+    ws.column_dimensions["A"].width = 22
+    ws.column_dimensions["B"].width = 18
+    ws.column_dimensions["C"].width = 18
+    ws.column_dimensions["D"].width = 18
+
+
+# =============================================================================
+# Workbook builder
+# =============================================================================
+
 def _build_skeleton_workbook(
     loan: LoanInputs,
     scenario: ScenarioConfig,
     series: SeriesData,
+    meta: ExportMeta | None = None,
 ) -> Workbook:
     """
     Build a banker-grade interactive workbook with 5 sheets,
     named ranges, data validation, formula-driven amortization,
-    and professional formatting.
-
-    B1 upgrade: Amortization sheet uses Excel formulas (not static data).
-    Changing any input on Loan Inputs recalculates the entire schedule.
+    executive summary, scenario comparisons, and professional formatting.
 
     Args:
         loan: Loan input parameters
         scenario: Scenario configuration
         series: Time series data (used for Overview data-point count)
+        meta: Export metadata for the static snapshot block
 
     Returns:
         openpyxl.Workbook ready to save
@@ -179,50 +435,21 @@ def _build_skeleton_workbook(
     ws_charts = wb.create_sheet("Charts", 4)
 
     # ==================================================================
-    # 1. Overview sheet
-    # ==================================================================
-    _apply_header_row(ws_overview, ["Banker Analytics — Excel Export"], row=1)
-    ws_overview.merge_cells("A1:D1")
-    ws_overview.cell(row=1, column=1).alignment = Alignment(horizontal="center")
-    ws_overview["A3"] = "Report Generated"
-    ws_overview["B3"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    ws_overview["A4"] = "Principal"
-    ws_overview["B4"] = loan.principal
-    ws_overview["B4"].number_format = _CURRENCY_FMT
-    ws_overview["A5"] = "Rate (APR)"
-    ws_overview["B5"] = loan.rate / 100
-    ws_overview["B5"].number_format = _PERCENT_FMT
-    ws_overview["A6"] = "Term (Months)"
-    ws_overview["B6"] = loan.term_months
-    ws_overview["A7"] = "Data Points"
-    ws_overview["B7"] = len(series.dates)
-    for row in range(3, 8):
-        ws_overview.cell(row=row, column=1).font = _LABEL_FONT
-        ws_overview.cell(row=row, column=2).font = _BODY_FONT
-        ws_overview.cell(row=row, column=1).border = _THIN_BORDER
-        ws_overview.cell(row=row, column=2).border = _THIN_BORDER
-    ws_overview.column_dimensions["A"].width = 22
-    ws_overview.column_dimensions["B"].width = 22
-
-    # ==================================================================
-    # 2. Loan Inputs sheet
+    # 1. Loan Inputs sheet (unchanged from B1)
     # ==================================================================
     _apply_header_row(ws_inputs, ["Loan Inputs", "Value", "Notes"], row=1)
 
-    # Subheader row
     ws_inputs.cell(row=2, column=1, value="Parameter").font = _LABEL_FONT
     ws_inputs.cell(row=2, column=2, value="Current").font = _LABEL_FONT
     ws_inputs.cell(row=2, column=3, value="Description").font = _LABEL_FONT
     for c in range(1, 4):
         ws_inputs.cell(row=2, column=c).border = _THIN_BORDER
 
-    # Parse start date to a real date for Excel compatibility (EDATE etc.)
     try:
         start_dt = datetime.strptime(loan.start_date, "%Y-%m-%d").date()
     except (ValueError, TypeError):
         start_dt = date(2023, 1, 1)
 
-    # Input data rows (rows 3–10)
     input_rows = [
         ("Amortization Type", loan.amort_type, "Amortization method"),
         ("Principal ($)", loan.principal, "Original loan amount"),
@@ -241,13 +468,12 @@ def _build_skeleton_workbook(
         for c in range(1, 4):
             ws_inputs.cell(row=r_idx, column=c).border = _THIN_BORDER
 
-    # Number formats for input cells
-    ws_inputs["B4"].number_format = _CURRENCY_FMT   # Principal
-    ws_inputs["B5"].number_format = _PERCENT_FMT     # Rate
-    ws_inputs["B7"].number_format = _DATE_FMT        # Start Date
-    ws_inputs["B9"].number_format = _CURRENCY_FMT    # Fees
+    ws_inputs["B4"].number_format = _CURRENCY_FMT
+    ws_inputs["B5"].number_format = _PERCENT_FMT
+    ws_inputs["B7"].number_format = _DATE_FMT
+    ws_inputs["B9"].number_format = _CURRENCY_FMT
 
-    # ---- B1: Derived Values section (rows 12–16) ----
+    # Derived Values section (B1)
     ws_inputs.cell(row=12, column=1, value="Derived Values").font = _LABEL_FONT
     ws_inputs.cell(row=12, column=2, value="Calculated").font = _LABEL_FONT
     ws_inputs.cell(row=12, column=3, value="Description").font = _LABEL_FONT
@@ -255,7 +481,6 @@ def _build_skeleton_workbook(
         ws_inputs.cell(row=12, column=c).border = _THIN_BORDER
 
     derived_rows = [
-        # (row, label, formula, fmt, note)
         (13, "Periods / Year",
          '=IF(Loan_Frequency="Monthly",12,IF(Loan_Frequency="Quarterly",4,12))',
          _BPS_FMT, "From frequency selection"),
@@ -278,15 +503,11 @@ def _build_skeleton_workbook(
         for c in range(1, 4):
             ws_inputs.cell(row=r_idx, column=c).border = _THIN_BORDER
 
-    # Column widths
     ws_inputs.column_dimensions["A"].width = 28
     ws_inputs.column_dimensions["B"].width = 18
     ws_inputs.column_dimensions["C"].width = 22
-
-    # Freeze panes (keep header + labels visible)
     ws_inputs.freeze_panes = "A3"
 
-    # Data validation: Payment Frequency dropdown
     dv_freq = DataValidation(
         type="list",
         formula1='"Monthly,Quarterly,Semiannual,Annual"',
@@ -306,8 +527,7 @@ def _build_skeleton_workbook(
         "Loan_Frequency": "'Loan Inputs'!$B$8",
     }
     for name, ref in named_ranges.items():
-        dn = DefinedName(name, attr_text=ref)
-        wb.defined_names.add(dn)
+        wb.defined_names.add(DefinedName(name, attr_text=ref))
 
     # Named ranges — B1 derived values
     derived_names = {
@@ -317,17 +537,15 @@ def _build_skeleton_workbook(
         "Payment": "'Loan Inputs'!$B$16",
     }
     for name, ref in derived_names.items():
-        dn = DefinedName(name, attr_text=ref)
-        wb.defined_names.add(dn)
+        wb.defined_names.add(DefinedName(name, attr_text=ref))
 
     # ==================================================================
-    # 3. Amortization sheet — formula-driven (B1)
+    # 2. Amortization sheet — formula-driven (B1, unchanged)
     # ==================================================================
     _apply_header_row(ws_amort, ["Amortization Schedule"], row=1)
     ws_amort.merge_cells("A1:F1")
     ws_amort.cell(row=1, column=1).alignment = Alignment(horizontal="center")
 
-    # Column headers (row 2) — 6 columns: Period, Date, Payment, Interest, Principal, Balance
     amort_cols = ["Period", "Date", "Payment", "Interest", "Principal", "Balance"]
     for col_idx, col_name in enumerate(amort_cols, start=1):
         cell = ws_amort.cell(row=2, column=col_idx, value=col_name)
@@ -335,14 +553,12 @@ def _build_skeleton_workbook(
         cell.border = _THIN_BORDER
         cell.alignment = Alignment(horizontal="center")
 
-    # Column widths
     for col_idx, width in enumerate([10, 14, 16, 16, 16, 16], start=1):
         ws_amort.column_dimensions[get_column_letter(col_idx)].width = width
 
-    # Freeze panes
     ws_amort.freeze_panes = "A3"
 
-    # ---- Row 3: Period 1 (special formulas — references Loan_Principal) ----
+    # Row 3: Period 1 (special formulas)
     ws_amort["A3"] = '=IF(ROW()-2>Num_Periods,"",ROW()-2)'
     ws_amort["B3"] = '=IF(A3="","",Loan_Start_Date)'
     ws_amort["C3"] = '=IF(A3="","",Payment)'
@@ -350,7 +566,6 @@ def _build_skeleton_workbook(
     ws_amort["E3"] = '=IF(A3="","",C3-D3)'
     ws_amort["F3"] = '=IF(A3="","",Loan_Principal-E3)'
 
-    # Format row 3
     for c in range(1, 7):
         cell = ws_amort.cell(row=3, column=c)
         cell.font = _BODY_FONT
@@ -362,7 +577,7 @@ def _build_skeleton_workbook(
     ws_amort["E3"].number_format = _CURRENCY_FMT
     ws_amort["F3"].number_format = _CURRENCY_FMT
 
-    # ---- Rows 4..362: Periods 2..360 (general formulas) ----
+    # Rows 4..362: Periods 2..360 (general formulas)
     for r in range(4, 3 + _MAX_AMORT_ROWS):
         prev = r - 1
         ws_amort.cell(row=r, column=1, value=f'=IF(ROW()-2>Num_Periods,"",ROW()-2)')
@@ -372,8 +587,7 @@ def _build_skeleton_workbook(
         ws_amort.cell(row=r, column=5, value=f'=IF(A{r}="","",C{r}-D{r})')
         ws_amort.cell(row=r, column=6, value=f'=IF(A{r}="","",F{prev}-E{r})')
 
-        # Formatting + zebra striping (even periods get light fill)
-        is_zebra = (r - 2) % 2 == 0  # periods 2, 4, 6 ...
+        is_zebra = (r - 2) % 2 == 0
         for c in range(1, 7):
             cell = ws_amort.cell(row=r, column=c)
             cell.font = _BODY_FONT
@@ -387,61 +601,20 @@ def _build_skeleton_workbook(
         ws_amort.cell(row=r, column=5).number_format = _CURRENCY_FMT
         ws_amort.cell(row=r, column=6).number_format = _CURRENCY_FMT
 
-    # Named range: Amort_Data (full data area for chart references)
-    dn_amort = DefinedName("Amort_Data", attr_text="'Amortization'!$A$2:$F$362")
-    wb.defined_names.add(dn_amort)
+    wb.defined_names.add(DefinedName("Amort_Data", attr_text="'Amortization'!$A$2:$F$362"))
 
     # ==================================================================
-    # 4. Scenarios sheet
+    # 3. Overview sheet — Executive Summary (B2)
     # ==================================================================
-    _apply_header_row(ws_scenarios, ["Scenario Configuration", "Value", "Notes"], row=1)
-
-    ws_scenarios.cell(row=2, column=1, value="Parameter").font = _LABEL_FONT
-    ws_scenarios.cell(row=2, column=2, value="Setting").font = _LABEL_FONT
-    ws_scenarios.cell(row=2, column=3, value="Description").font = _LABEL_FONT
-    for c in range(1, 4):
-        ws_scenarios.cell(row=2, column=c).border = _THIN_BORDER
-
-    scenario_rows = [
-        ("Scenario Name", "Base Case", "Current scenario"),
-        ("Rate Shock (bps)", scenario.rate_shock_bps, "Basis point shock to rates"),
-        ("Balance Shock (%)", scenario.balance_shock_pct, "Percentage shock to balance"),
-        ("Stress Toggle", str(scenario.stress_toggle).upper(), "Enable stress mode"),
-    ]
-    for r_idx, (label, value, note) in enumerate(scenario_rows, start=3):
-        ws_scenarios.cell(row=r_idx, column=1, value=label).font = _LABEL_FONT
-        ws_scenarios.cell(row=r_idx, column=2, value=value).font = _BODY_FONT
-        ws_scenarios.cell(row=r_idx, column=3, value=note).font = _BODY_FONT
-        for c in range(1, 4):
-            ws_scenarios.cell(row=r_idx, column=c).border = _THIN_BORDER
-
-    ws_scenarios["B4"].number_format = _BPS_FMT  # Rate Shock
-
-    ws_scenarios.column_dimensions["A"].width = 22
-    ws_scenarios.column_dimensions["B"].width = 16
-    ws_scenarios.column_dimensions["C"].width = 28
-
-    # Dropdown validations
-    dv_rate_shock = DataValidation(
-        type="list", formula1='"-100,0,100"', allow_blank=False,
-    )
-    ws_scenarios.add_data_validation(dv_rate_shock)
-    dv_rate_shock.add("B4")
-
-    dv_bal_shock = DataValidation(
-        type="list", formula1='"-5,0,5"', allow_blank=False,
-    )
-    ws_scenarios.add_data_validation(dv_bal_shock)
-    dv_bal_shock.add("B5")
-
-    dv_stress = DataValidation(
-        type="list", formula1='"FALSE,TRUE"', allow_blank=False,
-    )
-    ws_scenarios.add_data_validation(dv_stress)
-    dv_stress.add("B6")
+    _build_overview_sheet(ws_overview, meta)
 
     # ==================================================================
-    # 5. Charts sheet (placeholder for Phase B3)
+    # 4. Scenarios sheet — Interactive Comparison (B2)
+    # ==================================================================
+    _build_scenarios_sheet(ws_scenarios, scenario, wb)
+
+    # ==================================================================
+    # 5. Charts sheet (placeholder for B3)
     # ==================================================================
     _apply_header_row(ws_charts, ["Charts — Balance & Rate Visualization"], row=1)
     ws_charts.merge_cells("A1:E1")
@@ -472,7 +645,6 @@ def build_excel_workbook(
     analysis_id: int | None = None,
     user_id: int | None = None,
     request: Request | None = None,
-    # Phase A: allow injected payload for session mode
     _loan: LoanInputs | None = None,
     _scenario: ScenarioConfig | None = None,
     _series: SeriesData | None = None,
@@ -498,11 +670,9 @@ def build_excel_workbook(
     """
     _ensure_app_helpers()
 
-    # Resolve audit metadata
     req_id = getattr(request.state, "request_id", None) if request else None
     ip = _get_client_ip(request) if request else None
 
-    # Audit: requested
     _policy_log_event(
         db=_db,
         user_id=user_id,
@@ -520,7 +690,6 @@ def build_excel_workbook(
     )
 
     try:
-        # ---- Policy enforcement ----
         if mode == "persistent":
             if not user_id or not analysis_id:
                 raise ValueError("Persistent mode requires user_id and analysis_id")
@@ -530,7 +699,6 @@ def build_excel_workbook(
                 "user_id": user_id,
                 "analysis_id": analysis_id,
             })
-            # Phase A: persistent parquet loading is a placeholder
             raise NotImplementedError(
                 "Persistent-mode Excel export will be implemented in Phase B"
             )
@@ -545,7 +713,6 @@ def build_excel_workbook(
             scenario = _scenario
             series = _series
         else:
-            # Infer from session data
             from core.database_session_manager import DatabaseSessionManager
             sm = DatabaseSessionManager(ttl_minutes=30)
             sess = sm.get_session(session_id)
@@ -571,8 +738,14 @@ def build_excel_workbook(
                 stress_toggle=False,
             )
 
+        # ---- Build export metadata ----
+        meta = ExportMeta(
+            session_id=session_id,
+            data_points=len(series.dates),
+        )
+
         # ---- Build workbook ----
-        wb = _build_skeleton_workbook(loan, scenario, series)
+        wb = _build_skeleton_workbook(loan, scenario, series, meta)
 
         # ---- Save ----
         exports_dir = Path(__file__).resolve().parent.parent / "exports"
@@ -593,7 +766,6 @@ def build_excel_workbook(
         file_size = filepath.stat().st_size
         logger.info(f"Excel export saved: {filepath} ({file_size} bytes)")
 
-        # Audit: success
         _policy_log_event(
             db=_db,
             user_id=user_id,
@@ -613,7 +785,6 @@ def build_excel_workbook(
         return str(filepath)
 
     except Exception as e:
-        # Audit: failed
         _policy_log_event(
             db=_db,
             user_id=user_id,

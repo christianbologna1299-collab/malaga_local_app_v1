@@ -159,7 +159,7 @@ def main():
     # Check Scenarios validations
     ws_scenarios = wb["Scenarios"]
     scenario_dvs = ws_scenarios.data_validations.dataValidation
-    check("Scenarios sheet has validations", len(scenario_dvs) >= 3,
+    check("Scenarios sheet has validations", len(scenario_dvs) >= 2,
           f"got {len(scenario_dvs)}")
 
     # ------------------------------------------------------------------

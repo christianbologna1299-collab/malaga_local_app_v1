@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """
 M4.00 Phase A Smoke Test — Excel Export Engine.
+Updated for B1 compatibility (formula-driven amortization, date as datetime).
 Verifies workbook structure, named ranges, data validation, sheets, formatting.
 Usage: python scripts/smoke_m4_excel_phase_a.py
 Exit code 0 = PASS, nonzero = FAIL
@@ -9,6 +10,7 @@ Exit code 0 = PASS, nonzero = FAIL
 import sys
 import os
 import tempfile
+from datetime import date
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
@@ -106,7 +108,7 @@ def main():
     check("No default 'Sheet'", "Sheet" not in wb.sheetnames)
 
     # ------------------------------------------------------------------
-    # 4. Named ranges
+    # 4. Named ranges (Phase A originals)
     # ------------------------------------------------------------------
     print("\n[4] Named ranges")
     expected_names = [
@@ -129,9 +131,10 @@ def main():
           f"got {ws_inputs['B5'].value}")
     check("Loan_Term_Months value = 60", ws_inputs["B6"].value == 60,
           f"got {ws_inputs['B6'].value}")
-    check("Loan_Start_Date value = '2023-01-01'",
-          ws_inputs["B7"].value == "2023-01-01",
-          f"got {ws_inputs['B7'].value}")
+    # B7 is now a datetime.date (B1 change)
+    check("Loan_Start_Date is date 2023-01-01",
+          ws_inputs["B7"].value == date(2023, 1, 1),
+          f"got {ws_inputs['B7'].value} (type={type(ws_inputs['B7'].value).__name__})")
     check("Loan_Frequency value = 'Monthly'",
           ws_inputs["B8"].value == "Monthly",
           f"got {ws_inputs['B8'].value}")
@@ -189,22 +192,22 @@ def main():
           f"got {ws_inputs['B4'].number_format}")
 
     # ------------------------------------------------------------------
-    # 7. Amortization data
+    # 7. Amortization structure (B1: formula-driven, 6 columns)
     # ------------------------------------------------------------------
-    print("\n[7] Amortization data")
-    # Header row (row 2)
-    amort_headers = [ws_amort.cell(row=2, column=c).value for c in range(1, 6)]
-    check("Amortization headers correct",
-          amort_headers == ["Date", "Payment", "Interest", "Principal", "Balance"],
+    print("\n[7] Amortization structure")
+    # Header row (row 2) — B1 adds Period column
+    amort_headers = [ws_amort.cell(row=2, column=c).value for c in range(1, 7)]
+    check("Amortization headers correct (6 cols)",
+          amort_headers == ["Period", "Date", "Payment", "Interest", "Principal", "Balance"],
           f"got {amort_headers}")
 
-    # Data rows populated
-    check("Amortization has series data rows",
-          ws_amort.cell(row=3, column=1).value == "2023-01-01",
-          f"got {ws_amort.cell(row=3, column=1).value}")
-    check("Amortization last balance populated",
-          ws_amort.cell(row=14, column=5).value == 94500,
-          f"got {ws_amort.cell(row=14, column=5).value}")
+    # Row 3 should contain formulas (B1)
+    check("A3 has formula",
+          str(ws_amort["A3"].value).startswith("="),
+          f"got {ws_amort['A3'].value}")
+    check("F3 has formula",
+          str(ws_amort["F3"].value).startswith("="),
+          f"got {ws_amort['F3'].value}")
 
     # ------------------------------------------------------------------
     # 8. Save and reload

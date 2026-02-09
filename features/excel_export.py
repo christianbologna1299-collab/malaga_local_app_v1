@@ -1,10 +1,13 @@
 """
-M4.00 Phase A: Excel Export Engine v1 — Skeleton Workbook Builder.
+M4.01 Phase B1: Excel Export Engine — Formula-Driven Amortization.
 
 Produces a banker-grade interactive .xlsx workbook with:
   - Overview, Loan Inputs, Amortization, Scenarios, Charts sheets
   - Named ranges, data validation dropdowns, freeze panes
   - Dark header strip (printable body), currency/percent formatting
+  - Formula-driven amortization: inputs change → schedule recalculates
+  - Derived values (Periods/Year, Periodic Rate, Total Periods, Payment)
+  - 360-row IF-guarded formula grid with zebra striping
 
 Entry point: build_excel_workbook(...)
 """
@@ -12,7 +15,7 @@ Entry point: build_excel_workbook(...)
 import logging
 import os
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, date
 from pathlib import Path
 from typing import Literal
 
@@ -119,6 +122,12 @@ _CURRENCY_FMT = '#,##0.00'
 _PERCENT_FMT = '0.00%'
 _BPS_FMT = '#,##0'
 
+# B1: formula-driven amortization additions
+_ZEBRA_FILL = PatternFill(start_color="F2F6FA", end_color="F2F6FA", fill_type="solid")
+_DATE_FMT = 'YYYY-MM-DD'
+_RATE_PRECISE_FMT = '0.000000%'
+_MAX_AMORT_ROWS = 360
+
 
 # =============================================================================
 # Skeleton workbook builder
@@ -140,13 +149,17 @@ def _build_skeleton_workbook(
     series: SeriesData,
 ) -> Workbook:
     """
-    Build a banker-grade skeleton workbook with 5 sheets,
-    named ranges, data validation, and formatting.
+    Build a banker-grade interactive workbook with 5 sheets,
+    named ranges, data validation, formula-driven amortization,
+    and professional formatting.
+
+    B1 upgrade: Amortization sheet uses Excel formulas (not static data).
+    Changing any input on Loan Inputs recalculates the entire schedule.
 
     Args:
         loan: Loan input parameters
         scenario: Scenario configuration
-        series: Time series data
+        series: Time series data (used for Overview data-point count)
 
     Returns:
         openpyxl.Workbook ready to save
@@ -203,13 +216,19 @@ def _build_skeleton_workbook(
     for c in range(1, 4):
         ws_inputs.cell(row=2, column=c).border = _THIN_BORDER
 
-    # Data rows
+    # Parse start date to a real date for Excel compatibility (EDATE etc.)
+    try:
+        start_dt = datetime.strptime(loan.start_date, "%Y-%m-%d").date()
+    except (ValueError, TypeError):
+        start_dt = date(2023, 1, 1)
+
+    # Input data rows (rows 3–10)
     input_rows = [
         ("Amortization Type", loan.amort_type, "Amortization method"),
         ("Principal ($)", loan.principal, "Original loan amount"),
         ("Interest Rate (APR)", loan.rate / 100, "Annual percentage rate"),
         ("Term (Months)", loan.term_months, "Loan duration"),
-        ("Start Date", loan.start_date, "Origination date"),
+        ("Start Date", start_dt, "Origination date"),
         ("Payment Frequency", loan.payment_frequency, "Payment schedule"),
         ("Fees ($)", loan.fees if loan.fees is not None else 0, "Origination fees"),
         ("Interest-Only Months", loan.interest_only_months or 0, "IO period length"),
@@ -222,10 +241,42 @@ def _build_skeleton_workbook(
         for c in range(1, 4):
             ws_inputs.cell(row=r_idx, column=c).border = _THIN_BORDER
 
-    # Formatting for specific cells
-    ws_inputs["B4"].number_format = _CURRENCY_FMT  # Principal
-    ws_inputs["B5"].number_format = _PERCENT_FMT   # Rate
-    ws_inputs["B9"].number_format = _CURRENCY_FMT  # Fees
+    # Number formats for input cells
+    ws_inputs["B4"].number_format = _CURRENCY_FMT   # Principal
+    ws_inputs["B5"].number_format = _PERCENT_FMT     # Rate
+    ws_inputs["B7"].number_format = _DATE_FMT        # Start Date
+    ws_inputs["B9"].number_format = _CURRENCY_FMT    # Fees
+
+    # ---- B1: Derived Values section (rows 12–16) ----
+    ws_inputs.cell(row=12, column=1, value="Derived Values").font = _LABEL_FONT
+    ws_inputs.cell(row=12, column=2, value="Calculated").font = _LABEL_FONT
+    ws_inputs.cell(row=12, column=3, value="Description").font = _LABEL_FONT
+    for c in range(1, 4):
+        ws_inputs.cell(row=12, column=c).border = _THIN_BORDER
+
+    derived_rows = [
+        # (row, label, formula, fmt, note)
+        (13, "Periods / Year",
+         '=IF(Loan_Frequency="Monthly",12,IF(Loan_Frequency="Quarterly",4,12))',
+         _BPS_FMT, "From frequency selection"),
+        (14, "Periodic Rate",
+         '=Loan_Rate/Periods_Per_Year',
+         _RATE_PRECISE_FMT, "Per-period interest rate"),
+        (15, "Total Periods",
+         '=Loan_Term_Months/(12/Periods_Per_Year)',
+         _BPS_FMT, "Adjusted for frequency"),
+        (16, "Payment",
+         '=-PMT(Periodic_Rate,Num_Periods,Loan_Principal)',
+         _CURRENCY_FMT, "Level payment amount"),
+    ]
+    for r_idx, label, formula, fmt, note in derived_rows:
+        ws_inputs.cell(row=r_idx, column=1, value=label).font = _LABEL_FONT
+        cell_f = ws_inputs.cell(row=r_idx, column=2, value=formula)
+        cell_f.font = _BODY_FONT
+        cell_f.number_format = fmt
+        ws_inputs.cell(row=r_idx, column=3, value=note).font = _BODY_FONT
+        for c in range(1, 4):
+            ws_inputs.cell(row=r_idx, column=c).border = _THIN_BORDER
 
     # Column widths
     ws_inputs.column_dimensions["A"].width = 28
@@ -246,7 +297,7 @@ def _build_skeleton_workbook(
     ws_inputs.add_data_validation(dv_freq)
     dv_freq.add("B8")
 
-    # Named ranges (Loan Inputs sheet = index 1, 0-based)
+    # Named ranges — Phase A originals
     named_ranges = {
         "Loan_Principal": "'Loan Inputs'!$B$4",
         "Loan_Rate": "'Loan Inputs'!$B$5",
@@ -258,14 +309,26 @@ def _build_skeleton_workbook(
         dn = DefinedName(name, attr_text=ref)
         wb.defined_names.add(dn)
 
+    # Named ranges — B1 derived values
+    derived_names = {
+        "Periods_Per_Year": "'Loan Inputs'!$B$13",
+        "Periodic_Rate": "'Loan Inputs'!$B$14",
+        "Num_Periods": "'Loan Inputs'!$B$15",
+        "Payment": "'Loan Inputs'!$B$16",
+    }
+    for name, ref in derived_names.items():
+        dn = DefinedName(name, attr_text=ref)
+        wb.defined_names.add(dn)
+
     # ==================================================================
-    # 3. Amortization sheet
+    # 3. Amortization sheet — formula-driven (B1)
     # ==================================================================
     _apply_header_row(ws_amort, ["Amortization Schedule"], row=1)
-    ws_amort.merge_cells("A1:E1")
+    ws_amort.merge_cells("A1:F1")
     ws_amort.cell(row=1, column=1).alignment = Alignment(horizontal="center")
 
-    amort_cols = ["Date", "Payment", "Interest", "Principal", "Balance"]
+    # Column headers (row 2) — 6 columns: Period, Date, Payment, Interest, Principal, Balance
+    amort_cols = ["Period", "Date", "Payment", "Interest", "Principal", "Balance"]
     for col_idx, col_name in enumerate(amort_cols, start=1):
         cell = ws_amort.cell(row=2, column=col_idx, value=col_name)
         cell.font = _LABEL_FONT
@@ -273,23 +336,60 @@ def _build_skeleton_workbook(
         cell.alignment = Alignment(horizontal="center")
 
     # Column widths
-    for col_idx, width in enumerate([14, 16, 16, 16, 16], start=1):
+    for col_idx, width in enumerate([10, 14, 16, 16, 16, 16], start=1):
         ws_amort.column_dimensions[get_column_letter(col_idx)].width = width
 
     # Freeze panes
     ws_amort.freeze_panes = "A3"
 
-    # Populate with series data as placeholder rows
-    for r_idx, i in enumerate(range(len(series.dates)), start=3):
-        ws_amort.cell(row=r_idx, column=1, value=series.dates[i]).font = _BODY_FONT
-        ws_amort.cell(row=r_idx, column=2).font = _BODY_FONT  # Payment TBD
-        ws_amort.cell(row=r_idx, column=3).font = _BODY_FONT  # Interest TBD
-        ws_amort.cell(row=r_idx, column=4).font = _BODY_FONT  # Principal TBD
-        bal_cell = ws_amort.cell(row=r_idx, column=5, value=series.balances[i])
-        bal_cell.font = _BODY_FONT
-        bal_cell.number_format = _CURRENCY_FMT
-        for c in range(1, 6):
-            ws_amort.cell(row=r_idx, column=c).border = _THIN_BORDER
+    # ---- Row 3: Period 1 (special formulas — references Loan_Principal) ----
+    ws_amort["A3"] = '=IF(ROW()-2>Num_Periods,"",ROW()-2)'
+    ws_amort["B3"] = '=IF(A3="","",Loan_Start_Date)'
+    ws_amort["C3"] = '=IF(A3="","",Payment)'
+    ws_amort["D3"] = '=IF(A3="","",Loan_Principal*Periodic_Rate)'
+    ws_amort["E3"] = '=IF(A3="","",C3-D3)'
+    ws_amort["F3"] = '=IF(A3="","",Loan_Principal-E3)'
+
+    # Format row 3
+    for c in range(1, 7):
+        cell = ws_amort.cell(row=3, column=c)
+        cell.font = _BODY_FONT
+        cell.border = _THIN_BORDER
+    ws_amort["A3"].number_format = _BPS_FMT
+    ws_amort["B3"].number_format = _DATE_FMT
+    ws_amort["C3"].number_format = _CURRENCY_FMT
+    ws_amort["D3"].number_format = _CURRENCY_FMT
+    ws_amort["E3"].number_format = _CURRENCY_FMT
+    ws_amort["F3"].number_format = _CURRENCY_FMT
+
+    # ---- Rows 4..362: Periods 2..360 (general formulas) ----
+    for r in range(4, 3 + _MAX_AMORT_ROWS):
+        prev = r - 1
+        ws_amort.cell(row=r, column=1, value=f'=IF(ROW()-2>Num_Periods,"",ROW()-2)')
+        ws_amort.cell(row=r, column=2, value=f'=IF(A{r}="","",EDATE(B{prev},12/Periods_Per_Year))')
+        ws_amort.cell(row=r, column=3, value=f'=IF(A{r}="","",Payment)')
+        ws_amort.cell(row=r, column=4, value=f'=IF(A{r}="","",F{prev}*Periodic_Rate)')
+        ws_amort.cell(row=r, column=5, value=f'=IF(A{r}="","",C{r}-D{r})')
+        ws_amort.cell(row=r, column=6, value=f'=IF(A{r}="","",F{prev}-E{r})')
+
+        # Formatting + zebra striping (even periods get light fill)
+        is_zebra = (r - 2) % 2 == 0  # periods 2, 4, 6 ...
+        for c in range(1, 7):
+            cell = ws_amort.cell(row=r, column=c)
+            cell.font = _BODY_FONT
+            cell.border = _THIN_BORDER
+            if is_zebra:
+                cell.fill = _ZEBRA_FILL
+        ws_amort.cell(row=r, column=1).number_format = _BPS_FMT
+        ws_amort.cell(row=r, column=2).number_format = _DATE_FMT
+        ws_amort.cell(row=r, column=3).number_format = _CURRENCY_FMT
+        ws_amort.cell(row=r, column=4).number_format = _CURRENCY_FMT
+        ws_amort.cell(row=r, column=5).number_format = _CURRENCY_FMT
+        ws_amort.cell(row=r, column=6).number_format = _CURRENCY_FMT
+
+    # Named range: Amort_Data (full data area for chart references)
+    dn_amort = DefinedName("Amort_Data", attr_text="'Amortization'!$A$2:$F$362")
+    wb.defined_names.add(dn_amort)
 
     # ==================================================================
     # 4. Scenarios sheet
@@ -341,12 +441,12 @@ def _build_skeleton_workbook(
     dv_stress.add("B6")
 
     # ==================================================================
-    # 5. Charts sheet (placeholder for Phase B)
+    # 5. Charts sheet (placeholder for Phase B3)
     # ==================================================================
     _apply_header_row(ws_charts, ["Charts — Balance & Rate Visualization"], row=1)
     ws_charts.merge_cells("A1:E1")
     ws_charts.cell(row=1, column=1).alignment = Alignment(horizontal="center")
-    ws_charts["A3"] = "Charts will populate in Phase B."
+    ws_charts["A3"] = "Charts will populate in Phase B3."
     ws_charts["A3"].font = Font(name="Calibri", italic=True, color="888888", size=11)
     ws_charts["A5"] = "Planned:"
     ws_charts["A5"].font = _LABEL_FONT

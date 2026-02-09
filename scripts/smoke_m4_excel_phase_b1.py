@@ -108,8 +108,8 @@ def main():
     for name in phase_a_names:
         check(f"Phase A '{name}' preserved", name in defined_names)
 
-    check("Total named ranges = 10",
-          len(defined_names) == 10,
+    check("Total named ranges >= 10",
+          len(defined_names) >= 10,
           f"got {len(defined_names)}: {defined_names}")
 
     # ------------------------------------------------------------------

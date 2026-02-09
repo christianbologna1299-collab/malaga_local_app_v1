@@ -1,5 +1,5 @@
 """
-M4.01 Phase B4.2: Excel Export Engine — Banker-Grade Polish.
+M4.01 Phase B6.1: Excel Export Engine — Overview Print-Ready.
 
 Produces a banker-grade interactive .xlsx workbook with:
   - Overview (Executive Summary): formula-driven loan summary, KPIs, static snapshot
@@ -9,6 +9,7 @@ Produces a banker-grade interactive .xlsx workbook with:
   - Charts: 3 real chart objects linked to Amortization data (B3)
   - Sheet protection with unlocked inputs (B4.1)
   - Print setup, conditional formatting, tab colors, cell notes (B4.2)
+  - Overview print-ready 1-page handout (B6.1)
 
 Entry point: build_excel_workbook(...)
 """
@@ -116,6 +117,13 @@ class ExportMeta:
     data_points: int = 0
     source_filename: str | None = None
     timestamp: str | None = None  # auto-filled at build time if None
+
+
+@dataclass
+class ExportLayout:
+    """Layout configuration for print-ready export."""
+    paper_size: int = 1  # LETTER
+    orientation: str = "landscape"
 
 
 # =============================================================================
@@ -388,6 +396,127 @@ def _apply_b42_polish(wb: Workbook, meta: ExportMeta | None):
     _apply_print_setup(wb, meta)
     _apply_conditional_formatting(wb)
     _apply_input_notes(wb)
+
+
+# =============================================================================
+# B6.1: Overview print-ready helpers
+# =============================================================================
+
+def _col_letter(n: int) -> str:
+    """Convert 1-based column number to Excel column letter."""
+    return get_column_letter(n)
+
+
+def _format_export_ts(dt: datetime) -> str:
+    """Format datetime for header/footer display."""
+    return dt.strftime("Exported: %Y-%m-%d %H:%M")
+
+
+def _infer_print_area(
+    ws,
+    *,
+    min_row: int = 1,
+    min_col: int = 1,
+    max_scan_row: int = 200,
+    max_scan_col: int = 30,
+) -> tuple[int, int, int, int]:
+    """
+    Compute the bounding box of meaningful content in a worksheet.
+
+    Returns (min_row, min_col, last_row, last_col) where last_row/last_col
+    are the furthest row/col containing a non-empty cell value.
+    """
+    last_row = min_row
+    last_col = min_col
+
+    for r in range(min_row, max_scan_row + 1):
+        for c in range(min_col, max_scan_col + 1):
+            cell = ws.cell(row=r, column=c)
+            if cell.value is not None and str(cell.value).strip() != "":
+                if r > last_row:
+                    last_row = r
+                if c > last_col:
+                    last_col = c
+
+    # Safety clamp: col <= 12 (L) unless content truly exists beyond
+    if last_col > 12:
+        has_beyond = False
+        for r in range(min_row, last_row + 1):
+            for c in range(13, last_col + 1):
+                cell = ws.cell(row=r, column=c)
+                if cell.value is not None and str(cell.value).strip() != "":
+                    has_beyond = True
+                    break
+            if has_beyond:
+                break
+        if not has_beyond:
+            last_col = 12
+
+    # Safety clamp: row <= 80 unless content truly exists beyond
+    if last_row > 80:
+        has_beyond = False
+        for r in range(81, last_row + 1):
+            for c in range(min_col, last_col + 1):
+                cell = ws.cell(row=r, column=c)
+                if cell.value is not None and str(cell.value).strip() != "":
+                    has_beyond = True
+                    break
+            if has_beyond:
+                break
+        if not has_beyond:
+            last_row = 80
+
+    return (min_row, min_col, last_row, last_col)
+
+
+def _apply_overview_print_setup(
+    ws,
+    *,
+    session_id: str,
+    exported_at: datetime,
+    layout: ExportLayout,
+) -> None:
+    """
+    Configure the Overview sheet for print-ready 1-page banker handout.
+
+    Sets orientation, paper size, fit-to-page scaling, margins, centering,
+    print titles, computed print area, and professional header/footer.
+    """
+    # 1) Orientation, paper, scaling
+    ws.page_setup.orientation = "landscape"
+    ws.page_setup.paperSize = 1  # LETTER
+    ws.sheet_properties.pageSetUpPr = PageSetupProperties(fitToPage=True)
+    ws.page_setup.fitToWidth = 1
+    ws.page_setup.fitToHeight = 1
+
+    # 2) Margins (inches)
+    ws.page_margins.left = 0.5
+    ws.page_margins.right = 0.5
+    ws.page_margins.top = 0.75
+    ws.page_margins.bottom = 0.75
+    ws.page_margins.header = 0.3
+    ws.page_margins.footer = 0.3
+
+    # 3) Centering
+    ws.print_options.horizontalCentered = True
+    ws.print_options.verticalCentered = False
+
+    # 4) Print titles — repeat banner row on each page
+    ws.print_title_rows = "1:1"
+
+    # 5) Compute and set print area (dynamic, not hardcoded)
+    min_r, min_c, max_r, max_c = _infer_print_area(ws)
+    last_col_letter = _col_letter(max_c)
+    ws.print_area = f"A{min_r}:{last_col_letter}{max_r}"
+
+    # 6) Header / Footer
+    ts_str = _format_export_ts(exported_at)
+    ws.oddHeader.left.text = "Banker Analytics"
+    ws.oddHeader.center.text = "Loan Scenario Report"
+    ws.oddHeader.right.text = ts_str
+
+    ws.oddFooter.left.text = f"Session: {session_id}"
+    ws.oddFooter.right.text = "Page &P of &N"
 
 
 # =============================================================================
@@ -937,6 +1066,18 @@ def _build_skeleton_workbook(
     # 7. Banker-grade polish (B4.2)
     # ==================================================================
     _apply_b42_polish(wb, meta)
+
+    # ==================================================================
+    # 8. Overview print-ready setup (B6.1)
+    # ==================================================================
+    _exported_at = datetime.now()
+    _session_id = meta.session_id if meta else "N/A"
+    _apply_overview_print_setup(
+        ws_overview,
+        session_id=_session_id or "N/A",
+        exported_at=_exported_at,
+        layout=ExportLayout(),
+    )
 
     return wb
 

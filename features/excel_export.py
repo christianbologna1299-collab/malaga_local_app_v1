@@ -20,7 +20,7 @@ from typing import Literal
 
 from openpyxl import Workbook
 from openpyxl.chart import LineChart, AreaChart, Reference
-from openpyxl.styles import Font, PatternFill, Alignment, Border, Side, numbers
+from openpyxl.styles import Font, PatternFill, Alignment, Border, Side, Protection, numbers
 from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.datavalidation import DataValidation
 from openpyxl.workbook.defined_name import DefinedName
@@ -165,6 +165,14 @@ _COLOR_INTEREST = "C0392B"  # red
 _COLOR_PRINCIPAL = "27AE60" # green
 _COLOR_PAYMENT = "2980B9"   # teal
 
+# B4.1: sheet protection — editable input cell addresses
+# Loan Inputs sheet: B3=Amort Type, B4=Principal, B5=Rate, B6=Term,
+#   B7=Start Date, B8=Frequency, B9=Fees, B10=IO Months
+_LOAN_INPUT_CELLS = [f"B{r}" for r in range(3, 11)]
+# Scenarios sheet: B4=Rate Shock BPS, B5=Balance Shock Pct
+_SCENARIO_INPUT_CELLS = [f"B{_SC_INPUT_DATA_START}",
+                         f"B{_SC_INPUT_DATA_START + 1}"]
+
 
 # =============================================================================
 # Shared helpers
@@ -205,6 +213,35 @@ def _label_value_row(ws, row: int, label: str, value, fmt: str | None = None,
         val_cell.number_format = fmt
     for c in range(1, num_cols + 1):
         ws.cell(row=row, column=c).border = _THIN_BORDER
+
+
+# =============================================================================
+# B4.1: Sheet protection helpers
+# =============================================================================
+
+def _unlock_cells(ws, cell_addresses: list[str]):
+    """Mark specific cells as unlocked (editable when sheet is protected)."""
+    unlocked = Protection(locked=False)
+    for addr in cell_addresses:
+        ws[addr].protection = unlocked
+
+
+def _apply_sheet_protection(wb: Workbook):
+    """
+    Protect all sheets and unlock only designated input cells.
+
+    Editable cells:
+      - Loan Inputs B3:B10  (user inputs)
+      - Scenarios B4:B5     (shock parameters)
+    All other cells remain locked (Excel default).
+    No password — protection prevents accidental edits, not security.
+    """
+    _unlock_cells(wb["Loan Inputs"], _LOAN_INPUT_CELLS)
+    _unlock_cells(wb["Scenarios"], _SCENARIO_INPUT_CELLS)
+
+    for ws in wb.worksheets:
+        ws.protection.sheet = True
+        ws.protection.enable()
 
 
 # =============================================================================
@@ -738,6 +775,11 @@ def _build_skeleton_workbook(
     # 5. Charts sheet — real chart objects (B3)
     # ==================================================================
     _build_charts_sheet(wb)
+
+    # ==================================================================
+    # 6. Sheet protection + unlocked inputs (B4.1)
+    # ==================================================================
+    _apply_sheet_protection(wb)
 
     return wb
 

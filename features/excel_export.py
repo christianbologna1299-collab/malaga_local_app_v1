@@ -1,12 +1,12 @@
 """
-M4.01 Phase B2: Excel Export Engine — Executive Summary + Scenario Deltas.
+M4.01 Phase B3: Excel Export Engine — Real Excel Chart Objects.
 
 Produces a banker-grade interactive .xlsx workbook with:
   - Overview (Executive Summary): formula-driven loan summary, KPIs, static snapshot
   - Loan Inputs: user-editable inputs + derived values (B1)
   - Amortization: 360-row IF-guarded formula grid with zebra striping (B1)
   - Scenarios: interactive Base vs Shocked comparison with formula-driven deltas (B2)
-  - Charts: placeholder for B3
+  - Charts: 3 real chart objects linked to Amortization data (B3)
 
 Entry point: build_excel_workbook(...)
 """
@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Literal
 
 from openpyxl import Workbook
+from openpyxl.chart import LineChart, AreaChart, Reference
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side, numbers
 from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.datavalidation import DataValidation
@@ -154,6 +155,15 @@ _SC_INPUT_SECTION_ROW = 3
 _SC_INPUT_DATA_START = 4
 _SC_GRID_HEADER_ROW = 7
 _SC_GRID_DATA_START = 8
+
+# B3: chart constants
+_CHART_WIDTH = 22   # cm
+_CHART_HEIGHT = 12  # cm
+_CHART_STYLE = 10   # clean, minimal
+_COLOR_BALANCE = "1B2A4A"   # navy (matches header)
+_COLOR_INTEREST = "C0392B"  # red
+_COLOR_PRINCIPAL = "27AE60" # green
+_COLOR_PAYMENT = "2980B9"   # teal
 
 
 # =============================================================================
@@ -397,6 +407,117 @@ def _build_scenarios_sheet(ws, scenario: ScenarioConfig, wb: Workbook):
 
 
 # =============================================================================
+# B3: Chart factory functions
+# =============================================================================
+
+def _make_balance_chart(ws_amort) -> LineChart:
+    """Create Balance Over Time line chart from Amortization data."""
+    chart = LineChart()
+    chart.title = "Balance Over Time"
+    chart.y_axis.title = "Balance ($)"
+    chart.x_axis.title = "Period"
+    chart.style = _CHART_STYLE
+    chart.width = _CHART_WIDTH
+    chart.height = _CHART_HEIGHT
+
+    # Data: col F (Balance), rows 2-362 (row 2 = header for auto series title)
+    data = Reference(ws_amort, min_col=6, min_row=2, max_row=2 + _MAX_AMORT_ROWS)
+    cats = Reference(ws_amort, min_col=1, min_row=3, max_row=2 + _MAX_AMORT_ROWS)
+    chart.add_data(data, titles_from_data=True)
+    chart.set_categories(cats)
+
+    # Style: smooth navy line, no markers
+    s = chart.series[0]
+    s.graphicalProperties.line.solidFill = _COLOR_BALANCE
+    s.smooth = True
+
+    return chart
+
+
+def _make_payment_breakdown_chart(ws_amort) -> AreaChart:
+    """Create Payment Breakdown stacked area chart (Interest + Principal)."""
+    chart = AreaChart()
+    chart.title = "Payment Breakdown"
+    chart.y_axis.title = "Amount ($)"
+    chart.x_axis.title = "Period"
+    chart.style = _CHART_STYLE
+    chart.width = _CHART_WIDTH
+    chart.height = _CHART_HEIGHT
+    chart.grouping = "stacked"
+
+    # Data: cols D (Interest) and E (Principal), rows 2-362
+    data = Reference(ws_amort, min_col=4, max_col=5, min_row=2,
+                     max_row=2 + _MAX_AMORT_ROWS)
+    cats = Reference(ws_amort, min_col=1, min_row=3, max_row=2 + _MAX_AMORT_ROWS)
+    chart.add_data(data, titles_from_data=True)
+    chart.set_categories(cats)
+
+    # Style: Interest=red, Principal=green
+    chart.series[0].graphicalProperties.solidFill = _COLOR_INTEREST
+    chart.series[1].graphicalProperties.solidFill = _COLOR_PRINCIPAL
+
+    return chart
+
+
+def _make_payment_chart(ws_amort) -> LineChart:
+    """Create Payment Over Time line chart from Amortization data."""
+    chart = LineChart()
+    chart.title = "Payment Over Time"
+    chart.y_axis.title = "Payment ($)"
+    chart.x_axis.title = "Period"
+    chart.style = _CHART_STYLE
+    chart.width = _CHART_WIDTH
+    chart.height = _CHART_HEIGHT
+
+    # Data: col C (Payment), rows 2-362
+    data = Reference(ws_amort, min_col=3, min_row=2, max_row=2 + _MAX_AMORT_ROWS)
+    cats = Reference(ws_amort, min_col=1, min_row=3, max_row=2 + _MAX_AMORT_ROWS)
+    chart.add_data(data, titles_from_data=True)
+    chart.set_categories(cats)
+
+    # Style: smooth teal line, no markers
+    s = chart.series[0]
+    s.graphicalProperties.line.solidFill = _COLOR_PAYMENT
+    s.smooth = True
+
+    return chart
+
+
+def _build_charts_sheet(wb: Workbook):
+    """
+    Populate the Charts sheet with 3 real Excel chart objects
+    linked to Amortization data. Charts auto-update when inputs change.
+    """
+    ws_charts = wb["Charts"]
+    ws_amort = wb["Amortization"]
+
+    # Title
+    _apply_header_row(ws_charts, ["Charts — Amortization Visualization"], row=1)
+    ws_charts.merge_cells("A1:E1")
+    ws_charts.cell(row=1, column=1).alignment = Alignment(horizontal="center")
+
+    # Chart labels in column A
+    ws_charts["A2"] = "Balance Over Time"
+    ws_charts["A2"].font = _LABEL_FONT
+    ws_charts["A18"] = "Payment Breakdown"
+    ws_charts["A18"].font = _LABEL_FONT
+    ws_charts["A34"] = "Payment Over Time"
+    ws_charts["A34"].font = _LABEL_FONT
+
+    ws_charts.column_dimensions["A"].width = 40
+
+    # Create and place charts
+    chart1 = _make_balance_chart(ws_amort)
+    ws_charts.add_chart(chart1, "E2")
+
+    chart2 = _make_payment_breakdown_chart(ws_amort)
+    ws_charts.add_chart(chart2, "E18")
+
+    chart3 = _make_payment_chart(ws_amort)
+    ws_charts.add_chart(chart3, "E34")
+
+
+# =============================================================================
 # Workbook builder
 # =============================================================================
 
@@ -614,21 +735,9 @@ def _build_skeleton_workbook(
     _build_scenarios_sheet(ws_scenarios, scenario, wb)
 
     # ==================================================================
-    # 5. Charts sheet (placeholder for B3)
+    # 5. Charts sheet — real chart objects (B3)
     # ==================================================================
-    _apply_header_row(ws_charts, ["Charts — Balance & Rate Visualization"], row=1)
-    ws_charts.merge_cells("A1:E1")
-    ws_charts.cell(row=1, column=1).alignment = Alignment(horizontal="center")
-    ws_charts["A3"] = "Charts will populate in Phase B3."
-    ws_charts["A3"].font = Font(name="Calibri", italic=True, color="888888", size=11)
-    ws_charts["A5"] = "Planned:"
-    ws_charts["A5"].font = _LABEL_FONT
-    ws_charts["A6"] = "  - Balance over time (line)"
-    ws_charts["A7"] = "  - Rate over time (line)"
-    ws_charts["A8"] = "  - Shock comparison (dual axis)"
-    for r in range(6, 9):
-        ws_charts.cell(row=r, column=1).font = _BODY_FONT
-    ws_charts.column_dimensions["A"].width = 40
+    _build_charts_sheet(wb)
 
     return wb
 

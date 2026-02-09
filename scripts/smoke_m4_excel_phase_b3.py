@@ -86,7 +86,7 @@ def main():
     check("_make_balance_chart is callable", callable(_make_balance_chart))
     check("_make_payment_breakdown_chart is callable", callable(_make_payment_breakdown_chart))
     check("_make_payment_chart is callable", callable(_make_payment_chart))
-    check("_CHART_WIDTH = 22", _CHART_WIDTH == 22, f"got {_CHART_WIDTH}")
+    check("_CHART_WIDTH = 26", _CHART_WIDTH == 26, f"got {_CHART_WIDTH}")
     check("_CHART_HEIGHT = 12", _CHART_HEIGHT == 12, f"got {_CHART_HEIGHT}")
 
     # ------------------------------------------------------------------
@@ -117,9 +117,9 @@ def main():
 
     check("Chart 1 is LineChart", isinstance(chart1, LineChart),
           f"got {type(chart1).__name__}")
-    check("Chart 2 is AreaChart", isinstance(chart2, AreaChart),
+    check("Chart 2 is LineChart", isinstance(chart2, LineChart),
           f"got {type(chart2).__name__}")
-    check("Chart 3 is LineChart", isinstance(chart3, LineChart),
+    check("Chart 3 is AreaChart", isinstance(chart3, AreaChart),
           f"got {type(chart3).__name__}")
 
     # ------------------------------------------------------------------
@@ -131,10 +131,10 @@ def main():
     t3 = _chart_title_text(chart3)
     check("Chart 1 title = 'Balance Over Time'",
           t1 == "Balance Over Time", f"got {t1}")
-    check("Chart 2 title = 'Payment Breakdown'",
-          t2 == "Payment Breakdown", f"got {t2}")
-    check("Chart 3 title = 'Payment Over Time'",
-          t3 == "Payment Over Time", f"got {t3}")
+    check("Chart 2 title = 'Payment Over Time'",
+          t2 == "Payment Over Time", f"got {t2}")
+    check("Chart 3 title contains 'Payment Breakdown'",
+          t3 is not None and "Payment Breakdown" in t3, f"got {t3}")
 
     # ------------------------------------------------------------------
     # 5. Chart 1 data references (Balance Over Time)
@@ -150,7 +150,7 @@ def main():
           "$F$" in s1_ref or "!F" in s1_ref or "'Amortization'" in s1_ref,
           f"got {s1_ref}")
 
-    check("Chart 1 width = 22", chart1.width == _CHART_WIDTH,
+    check("Chart 1 width matches constant", chart1.width == _CHART_WIDTH,
           f"got {chart1.width}")
     check("Chart 1 height = 12", chart1.height == _CHART_HEIGHT,
           f"got {chart1.height}")
@@ -161,34 +161,33 @@ def main():
           f"got {chart1.y_axis.title}")
 
     # ------------------------------------------------------------------
-    # 6. Chart 2 data references (Payment Breakdown)
+    # 6. Chart 2 data references (Payment Over Time)
     # ------------------------------------------------------------------
-    print("\n[6] Chart 2 — Payment Breakdown data refs")
-    check("Chart 2 has 2 data series", len(chart2.series) == 2,
+    print("\n[6] Chart 2 — Payment Over Time data refs")
+    check("Chart 2 has 1 data series", len(chart2.series) == 1,
           f"got {len(chart2.series)}")
-    check("Chart 2 grouping = 'stacked'", chart2.grouping == "stacked",
-          f"got {chart2.grouping}")
 
-    # Y-axis title
+    s2 = chart2.series[0]
+    s2_ref = str(s2.val.numRef.f) if hasattr(s2.val, 'numRef') else str(s2.val)
+    check("Chart 2 data refs col C (Payment)",
+          "$C$" in s2_ref or "!C" in s2_ref or "'Amortization'" in s2_ref,
+          f"got {s2_ref}")
+
     check("Chart 2 y-axis title",
-          chart2.y_axis.title is not None and "Amount" in str(chart2.y_axis.title),
+          chart2.y_axis.title is not None and "Payment" in str(chart2.y_axis.title),
           f"got {chart2.y_axis.title}")
 
     # ------------------------------------------------------------------
-    # 7. Chart 3 data references (Payment Over Time)
+    # 7. Chart 3 data references (Payment Breakdown)
     # ------------------------------------------------------------------
-    print("\n[7] Chart 3 — Payment Over Time data refs")
-    check("Chart 3 has 1 data series", len(chart3.series) == 1,
+    print("\n[7] Chart 3 — Payment Breakdown data refs")
+    check("Chart 3 has 2 data series", len(chart3.series) == 2,
           f"got {len(chart3.series)}")
-
-    s3 = chart3.series[0]
-    s3_ref = str(s3.val.numRef.f) if hasattr(s3.val, 'numRef') else str(s3.val)
-    check("Chart 3 data refs col C (Payment)",
-          "$C$" in s3_ref or "!C" in s3_ref or "'Amortization'" in s3_ref,
-          f"got {s3_ref}")
+    check("Chart 3 grouping = 'stacked'", chart3.grouping == "stacked",
+          f"got {chart3.grouping}")
 
     check("Chart 3 y-axis title",
-          chart3.y_axis.title is not None and "Payment" in str(chart3.y_axis.title),
+          chart3.y_axis.title is not None and "Amount" in str(chart3.y_axis.title),
           f"got {chart3.y_axis.title}")
 
     # ------------------------------------------------------------------
@@ -219,11 +218,12 @@ def main():
     check("A2 label = 'Balance Over Time'",
           ws_charts["A2"].value == "Balance Over Time",
           f"got {ws_charts['A2'].value}")
-    check("A18 label = 'Payment Breakdown'",
-          ws_charts["A18"].value == "Payment Breakdown",
+    check("A18 label = 'Payment Over Time'",
+          ws_charts["A18"].value == "Payment Over Time",
           f"got {ws_charts['A18'].value}")
-    check("A34 label = 'Payment Over Time'",
-          ws_charts["A34"].value == "Payment Over Time",
+    check("A34 label contains 'Payment Breakdown'",
+          ws_charts["A34"].value is not None
+          and "Payment Breakdown" in str(ws_charts["A34"].value),
           f"got {ws_charts['A34'].value}")
 
     check("Column A width >= 30",
@@ -256,9 +256,9 @@ def main():
         check("Chart 1 title survives",
               t1r == "Balance Over Time", f"got {t1r}")
         check("Chart 2 title survives",
-              t2r == "Payment Breakdown", f"got {t2r}")
+              t2r == "Payment Over Time", f"got {t2r}")
         check("Chart 3 title survives",
-              t3r == "Payment Over Time", f"got {t3r}")
+              t3r is not None and "Payment Breakdown" in t3r, f"got {t3r}")
 
         wb2.close()
     finally:

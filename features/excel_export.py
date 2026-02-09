@@ -161,10 +161,16 @@ _SC_INPUT_DATA_START = 4
 _SC_GRID_HEADER_ROW = 7
 _SC_GRID_DATA_START = 8
 
-# B3: chart constants
-_CHART_WIDTH = 22   # cm
+# B3/B5: chart constants
+_CHART_WIDTH = 26   # cm
 _CHART_HEIGHT = 12  # cm
 _CHART_STYLE = 10   # clean, minimal
+_CHART_ANCHOR_1 = "E2"    # Balance Over Time
+_CHART_ANCHOR_2 = "E18"   # Payment Over Time
+_CHART_ANCHOR_3 = "E34"   # Payment Breakdown
+_CHART_CURRENCY_FMT = '$#,##0'
+_CHART_DATA_START_ROW = 3
+_CHART_DATA_END_ROW = 2 + _MAX_AMORT_ROWS  # 362
 _COLOR_BALANCE = "1B2A4A"   # navy (matches header)
 _COLOR_INTEREST = "C0392B"  # red
 _COLOR_PRINCIPAL = "27AE60" # green
@@ -593,13 +599,15 @@ def _make_balance_chart(ws_amort) -> LineChart:
     chart.title = "Balance Over Time"
     chart.y_axis.title = "Balance ($)"
     chart.x_axis.title = "Period"
+    chart.y_axis.numFmt = _CHART_CURRENCY_FMT
     chart.style = _CHART_STYLE
     chart.width = _CHART_WIDTH
     chart.height = _CHART_HEIGHT
 
-    # Data: col F (Balance), rows 2-362 (row 2 = header for auto series title)
-    data = Reference(ws_amort, min_col=6, min_row=2, max_row=2 + _MAX_AMORT_ROWS)
-    cats = Reference(ws_amort, min_col=1, min_row=3, max_row=2 + _MAX_AMORT_ROWS)
+    # Data: col F (Balance), row 2=header for auto series title, rows 3-362=data
+    data = Reference(ws_amort, min_col=6, min_row=2, max_row=_CHART_DATA_END_ROW)
+    cats = Reference(ws_amort, min_col=1, min_row=_CHART_DATA_START_ROW,
+                     max_row=_CHART_DATA_END_ROW)
     chart.add_data(data, titles_from_data=True)
     chart.set_categories(cats)
 
@@ -611,44 +619,21 @@ def _make_balance_chart(ws_amort) -> LineChart:
     return chart
 
 
-def _make_payment_breakdown_chart(ws_amort) -> AreaChart:
-    """Create Payment Breakdown stacked area chart (Interest + Principal)."""
-    chart = AreaChart()
-    chart.title = "Payment Breakdown"
-    chart.y_axis.title = "Amount ($)"
-    chart.x_axis.title = "Period"
-    chart.style = _CHART_STYLE
-    chart.width = _CHART_WIDTH
-    chart.height = _CHART_HEIGHT
-    chart.grouping = "stacked"
-
-    # Data: cols D (Interest) and E (Principal), rows 2-362
-    data = Reference(ws_amort, min_col=4, max_col=5, min_row=2,
-                     max_row=2 + _MAX_AMORT_ROWS)
-    cats = Reference(ws_amort, min_col=1, min_row=3, max_row=2 + _MAX_AMORT_ROWS)
-    chart.add_data(data, titles_from_data=True)
-    chart.set_categories(cats)
-
-    # Style: Interest=red, Principal=green
-    chart.series[0].graphicalProperties.solidFill = _COLOR_INTEREST
-    chart.series[1].graphicalProperties.solidFill = _COLOR_PRINCIPAL
-
-    return chart
-
-
 def _make_payment_chart(ws_amort) -> LineChart:
     """Create Payment Over Time line chart from Amortization data."""
     chart = LineChart()
     chart.title = "Payment Over Time"
     chart.y_axis.title = "Payment ($)"
     chart.x_axis.title = "Period"
+    chart.y_axis.numFmt = _CHART_CURRENCY_FMT
     chart.style = _CHART_STYLE
     chart.width = _CHART_WIDTH
     chart.height = _CHART_HEIGHT
 
-    # Data: col C (Payment), rows 2-362
-    data = Reference(ws_amort, min_col=3, min_row=2, max_row=2 + _MAX_AMORT_ROWS)
-    cats = Reference(ws_amort, min_col=1, min_row=3, max_row=2 + _MAX_AMORT_ROWS)
+    # Data: col C (Payment), row 2=header, rows 3-362=data
+    data = Reference(ws_amort, min_col=3, min_row=2, max_row=_CHART_DATA_END_ROW)
+    cats = Reference(ws_amort, min_col=1, min_row=_CHART_DATA_START_ROW,
+                     max_row=_CHART_DATA_END_ROW)
     chart.add_data(data, titles_from_data=True)
     chart.set_categories(cats)
 
@@ -656,6 +641,33 @@ def _make_payment_chart(ws_amort) -> LineChart:
     s = chart.series[0]
     s.graphicalProperties.line.solidFill = _COLOR_PAYMENT
     s.smooth = True
+
+    return chart
+
+
+def _make_payment_breakdown_chart(ws_amort) -> AreaChart:
+    """Create Payment Breakdown stacked area chart (Interest + Principal)."""
+    chart = AreaChart()
+    chart.title = "Payment Breakdown (Interest vs Principal)"
+    chart.y_axis.title = "Amount ($)"
+    chart.x_axis.title = "Period"
+    chart.y_axis.numFmt = _CHART_CURRENCY_FMT
+    chart.style = _CHART_STYLE
+    chart.width = _CHART_WIDTH
+    chart.height = _CHART_HEIGHT
+    chart.grouping = "stacked"
+
+    # Data: cols D (Interest) and E (Principal), row 2=headers, rows 3-362=data
+    data = Reference(ws_amort, min_col=4, max_col=5, min_row=2,
+                     max_row=_CHART_DATA_END_ROW)
+    cats = Reference(ws_amort, min_col=1, min_row=_CHART_DATA_START_ROW,
+                     max_row=_CHART_DATA_END_ROW)
+    chart.add_data(data, titles_from_data=True)
+    chart.set_categories(cats)
+
+    # Style: Interest=red, Principal=green
+    chart.series[0].graphicalProperties.solidFill = _COLOR_INTEREST
+    chart.series[1].graphicalProperties.solidFill = _COLOR_PRINCIPAL
 
     return chart
 
@@ -676,22 +688,22 @@ def _build_charts_sheet(wb: Workbook):
     # Chart labels in column A
     ws_charts["A2"] = "Balance Over Time"
     ws_charts["A2"].font = _LABEL_FONT
-    ws_charts["A18"] = "Payment Breakdown"
+    ws_charts["A18"] = "Payment Over Time"
     ws_charts["A18"].font = _LABEL_FONT
-    ws_charts["A34"] = "Payment Over Time"
+    ws_charts["A34"] = "Payment Breakdown (Interest vs Principal)"
     ws_charts["A34"].font = _LABEL_FONT
 
-    ws_charts.column_dimensions["A"].width = 40
+    ws_charts.column_dimensions["A"].width = 44
 
     # Create and place charts
     chart1 = _make_balance_chart(ws_amort)
-    ws_charts.add_chart(chart1, "E2")
+    ws_charts.add_chart(chart1, _CHART_ANCHOR_1)
 
-    chart2 = _make_payment_breakdown_chart(ws_amort)
-    ws_charts.add_chart(chart2, "E18")
+    chart2 = _make_payment_chart(ws_amort)
+    ws_charts.add_chart(chart2, _CHART_ANCHOR_2)
 
-    chart3 = _make_payment_chart(ws_amort)
-    ws_charts.add_chart(chart3, "E34")
+    chart3 = _make_payment_breakdown_chart(ws_amort)
+    ws_charts.add_chart(chart3, _CHART_ANCHOR_3)
 
 
 # =============================================================================

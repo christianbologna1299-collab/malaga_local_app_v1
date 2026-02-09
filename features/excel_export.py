@@ -1,5 +1,5 @@
 """
-M4.01 Phase B3: Excel Export Engine — Real Excel Chart Objects.
+M4.01 Phase B4.2: Excel Export Engine — Banker-Grade Polish.
 
 Produces a banker-grade interactive .xlsx workbook with:
   - Overview (Executive Summary): formula-driven loan summary, KPIs, static snapshot
@@ -7,6 +7,8 @@ Produces a banker-grade interactive .xlsx workbook with:
   - Amortization: 360-row IF-guarded formula grid with zebra striping (B1)
   - Scenarios: interactive Base vs Shocked comparison with formula-driven deltas (B2)
   - Charts: 3 real chart objects linked to Amortization data (B3)
+  - Sheet protection with unlocked inputs (B4.1)
+  - Print setup, conditional formatting, tab colors, cell notes (B4.2)
 
 Entry point: build_excel_workbook(...)
 """
@@ -24,6 +26,9 @@ from openpyxl.styles import Font, PatternFill, Alignment, Border, Side, Protecti
 from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.datavalidation import DataValidation
 from openpyxl.workbook.defined_name import DefinedName
+from openpyxl.formatting.rule import CellIsRule
+from openpyxl.comments import Comment
+from openpyxl.worksheet.properties import PageSetupProperties
 from starlette.requests import Request
 
 logger = logging.getLogger(__name__)
@@ -173,6 +178,29 @@ _LOAN_INPUT_CELLS = [f"B{r}" for r in range(3, 11)]
 _SCENARIO_INPUT_CELLS = [f"B{_SC_INPUT_DATA_START}",
                          f"B{_SC_INPUT_DATA_START + 1}"]
 
+# B4.2: banker-grade polish constants
+# Tab colors
+_TAB_COLOR_PRIMARY = "1B2A4A"    # dark navy — Overview
+_TAB_COLOR_ACCENT = "2980B9"     # teal — Loan Inputs, Scenarios
+_TAB_COLOR_NEUTRAL = "95A5A6"    # grey — Amortization, Charts
+
+# Conditional formatting (muted, luxury theme)
+_CF_RED_FILL = PatternFill(start_color="FDE8E8", end_color="FDE8E8", fill_type="solid")
+_CF_RED_FONT = Font(color="C0392B")
+_CF_GREEN_FILL = PatternFill(start_color="E8F5E8", end_color="E8F5E8", fill_type="solid")
+_CF_GREEN_FONT = Font(color="27AE60")
+_INPUT_HIGHLIGHT_FILL = PatternFill(start_color="FFFDE8", end_color="FFFDE8", fill_type="solid")
+
+# Print layout
+_OV_LAST_ROW = _OV_SNAPSHOT_DATA_START + 3     # 21
+_SC_LAST_ROW = _SC_GRID_DATA_START + 4          # 12
+_OV_PRINT_AREA = f"A1:B{_OV_LAST_ROW}"          # A1:B21
+_SC_PRINT_AREA = f"A1:D{_SC_LAST_ROW}"           # A1:D12
+_SC_DELTA_RANGE = f"D{_SC_GRID_DATA_START}:D{_SC_LAST_ROW}"  # D8:D12
+_PRINT_MARGIN_LR = 0.5   # inches
+_PRINT_MARGIN_TB = 0.75
+_PRINT_MARGIN_HF = 0.3
+
 
 # =============================================================================
 # Shared helpers
@@ -242,6 +270,118 @@ def _apply_sheet_protection(wb: Workbook):
     for ws in wb.worksheets:
         ws.protection.sheet = True
         ws.protection.enable()
+
+
+# =============================================================================
+# B4.2: Banker-grade polish helpers
+# =============================================================================
+
+def _apply_print_setup(wb: Workbook, meta: ExportMeta | None):
+    """Apply print-ready page setup to Overview and Scenarios sheets."""
+    meta = meta or ExportMeta()
+    sid = meta.session_id or "N/A"
+    ts = meta.timestamp or datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    sheets = [
+        ("Overview",  _OV_PRINT_AREA, 1),
+        ("Scenarios", _SC_PRINT_AREA, 1),
+    ]
+    for sheet_name, print_area, fit_height in sheets:
+        ws = wb[sheet_name]
+
+        # Landscape, fit to 1 page
+        ws.sheet_properties.pageSetUpPr = PageSetupProperties(fitToPage=True)
+        ws.page_setup.orientation = "landscape"
+        ws.page_setup.fitToWidth = 1
+        ws.page_setup.fitToHeight = fit_height
+        ws.print_area = print_area
+
+        # Margins (inches)
+        ws.page_margins.left = _PRINT_MARGIN_LR
+        ws.page_margins.right = _PRINT_MARGIN_LR
+        ws.page_margins.top = _PRINT_MARGIN_TB
+        ws.page_margins.bottom = _PRINT_MARGIN_TB
+        ws.page_margins.header = _PRINT_MARGIN_HF
+        ws.page_margins.footer = _PRINT_MARGIN_HF
+
+        # Header / Footer
+        ws.oddHeader.center.text = "Banker Analytics — Confidential"
+        ws.oddFooter.left.text = f"Session: {sid}"
+        ws.oddFooter.right.text = f"Generated: {ts}"
+
+
+def _apply_conditional_formatting(wb: Workbook):
+    """Add conditional formatting to Scenarios delta column and input highlight."""
+    ws = wb["Scenarios"]
+
+    # Positive delta = worse outcome → muted red
+    ws.conditional_formatting.add(
+        _SC_DELTA_RANGE,
+        CellIsRule(operator="greaterThan", formula=["0"],
+                   fill=_CF_RED_FILL, font=_CF_RED_FONT),
+    )
+    # Negative delta = improvement → muted green
+    ws.conditional_formatting.add(
+        _SC_DELTA_RANGE,
+        CellIsRule(operator="lessThan", formula=["0"],
+                   fill=_CF_GREEN_FILL, font=_CF_GREEN_FONT),
+    )
+
+    # Light highlight on editable input cells
+    for addr in _SCENARIO_INPUT_CELLS:
+        ws[addr].fill = _INPUT_HIGHLIGHT_FILL
+
+
+def _apply_tab_colors(wb: Workbook):
+    """Set tab colors for visual sheet organization."""
+    colors = {
+        "Overview": _TAB_COLOR_PRIMARY,
+        "Loan Inputs": _TAB_COLOR_ACCENT,
+        "Amortization": _TAB_COLOR_NEUTRAL,
+        "Scenarios": _TAB_COLOR_ACCENT,
+        "Charts": _TAB_COLOR_NEUTRAL,
+    }
+    for name, color in colors.items():
+        wb[name].sheet_properties.tabColor = color
+
+
+def _apply_input_notes(wb: Workbook):
+    """Add cell comments to input cells for banker guidance."""
+    ws_inp = wb["Loan Inputs"]
+    loan_notes = {
+        "B3": "Select the amortization method for this loan.",
+        "B4": "Enter the original loan principal amount in dollars.",
+        "B5": "Enter the annual percentage rate (APR) as a decimal.",
+        "B6": "Enter the loan duration in months.",
+        "B7": "Enter the loan origination date (YYYY-MM-DD).",
+        "B8": "Select payment frequency from the dropdown list.",
+        "B9": "Enter origination fees in dollars (0 if none).",
+        "B10": "Enter interest-only period in months (0 if none).",
+    }
+    for addr, text in loan_notes.items():
+        ws_inp[addr].comment = Comment(text, "Banker Analytics")
+
+    ws_sc = wb["Scenarios"]
+    scenario_notes = {
+        f"B{_SC_INPUT_DATA_START}":
+            "Basis points added to the base rate. 100 bps = 1 percentage point.",
+        f"B{_SC_INPUT_DATA_START + 1}":
+            "Percentage change applied to loan principal. Positive = increase.",
+    }
+    for addr, text in scenario_notes.items():
+        ws_sc[addr].comment = Comment(text, "Banker Analytics")
+
+
+def _apply_b42_polish(wb: Workbook, meta: ExportMeta | None):
+    """Orchestrate all B4.2 banker-grade polish operations."""
+    # Freeze panes for sheets that don't have them yet
+    wb["Overview"].freeze_panes = "A2"
+    wb["Scenarios"].freeze_panes = "A2"
+
+    _apply_tab_colors(wb)
+    _apply_print_setup(wb, meta)
+    _apply_conditional_formatting(wb)
+    _apply_input_notes(wb)
 
 
 # =============================================================================
@@ -780,6 +920,11 @@ def _build_skeleton_workbook(
     # 6. Sheet protection + unlocked inputs (B4.1)
     # ==================================================================
     _apply_sheet_protection(wb)
+
+    # ==================================================================
+    # 7. Banker-grade polish (B4.2)
+    # ==================================================================
+    _apply_b42_polish(wb, meta)
 
     return wb
 

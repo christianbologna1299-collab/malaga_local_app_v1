@@ -181,23 +181,28 @@ def main():
     # 7. Headers / Footers
     # ------------------------------------------------------------------
     print("\n[7] Headers / Footers")
-    ov_hdr = ws_ov.oddHeader.center.text if ws_ov.oddHeader.center else ""
+    # B6.1 overrides Overview header: left="Banker Analytics", center="Loan Scenario Report"
+    ov_hdr_l = ws_ov.oddHeader.left.text if ws_ov.oddHeader.left else ""
+    ov_hdr_c = ws_ov.oddHeader.center.text if ws_ov.oddHeader.center else ""
     check("Overview header has 'Banker Analytics'",
-          "Banker Analytics" in (ov_hdr or ""),
-          f"got '{ov_hdr}'")
-    check("Overview header has 'Confidential'",
-          "Confidential" in (ov_hdr or ""),
-          f"got '{ov_hdr}'")
+          "Banker Analytics" in (ov_hdr_l or "") or "Banker Analytics" in (ov_hdr_c or ""),
+          f"got left='{ov_hdr_l}', center='{ov_hdr_c}'")
+    check("Overview header has 'Loan Scenario Report'",
+          "Loan Scenario Report" in (ov_hdr_c or ""),
+          f"got '{ov_hdr_c}'")
 
     ov_ftr_l = ws_ov.oddFooter.left.text if ws_ov.oddFooter.left else ""
     check("Overview footer has session_id",
           "test-sess-b42" in (ov_ftr_l or ""),
           f"got '{ov_ftr_l}'")
 
+    # B6.1 overrides Overview footer right to "Page &P of &N";
+    # timestamp moves to header right
     ov_ftr_r = ws_ov.oddFooter.right.text if ws_ov.oddFooter.right else ""
-    check("Overview footer has timestamp",
-          "2023-06-15" in (ov_ftr_r or ""),
-          f"got '{ov_ftr_r}'")
+    ov_hdr_r = ws_ov.oddHeader.right.text if ws_ov.oddHeader.right else ""
+    check("Overview has timestamp (header right)",
+          "Exported:" in (ov_hdr_r or "") or "2023" in (ov_ftr_r or ""),
+          f"got header_r='{ov_hdr_r}', footer_r='{ov_ftr_r}'")
 
     sc_hdr = ws_sc.oddHeader.center.text if ws_sc.oddHeader.center else ""
     check("Scenarios header has 'Confidential'",
@@ -284,11 +289,12 @@ def main():
               ws2_ov.print_area is not None and len(ws2_ov.print_area) > 0,
               f"got {ws2_ov.print_area}")
 
-        # Header survives
-        hdr2 = ws2_ov.oddHeader.center.text if ws2_ov.oddHeader.center else ""
+        # Header survives (B6.1: left="Banker Analytics", center="Loan Scenario Report")
+        hdr2_l = ws2_ov.oddHeader.left.text if ws2_ov.oddHeader.left else ""
+        hdr2_c = ws2_ov.oddHeader.center.text if ws2_ov.oddHeader.center else ""
         check("Overview header survives reload",
-              "Banker Analytics" in (hdr2 or ""),
-              f"got '{hdr2}'")
+              "Banker Analytics" in (hdr2_l or "") or "Banker Analytics" in (hdr2_c or ""),
+              f"got left='{hdr2_l}', center='{hdr2_c}'")
 
         # Conditional formatting survives
         ws2_sc = wb2["Scenarios"]

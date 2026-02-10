@@ -1,10 +1,13 @@
 """
-Banker Analytics - Milestone 2 + 3
-FastAPI app with Milestone 1 (quick analyze), Milestone 2 (feature hub), and M3 (multi-user auth).
+Banker Analytics - Milestone 3.75
+FastAPI app with M1 (quick analyze), M2 (feature hub), M3 (multi-user auth),
+M3.5 (trend engine), and M3.75 (policy-as-code + audit events + middleware).
 """
 
+import json
 import logging
 import os
+import uuid
 from datetime import datetime, timedelta
 from pathlib import Path
 from fastapi import FastAPI, UploadFile, File, HTTPException
@@ -13,6 +16,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.requests import Request
 from starlette.middleware.sessions import SessionMiddleware
+from starlette.middleware.base import BaseHTTPMiddleware
 import pandas as pd
 import plotly.graph_objects as go
 import io
@@ -20,7 +24,7 @@ import io
 # Core & Features imports
 from core.database_session_manager import DatabaseSessionManager
 from core.validators import parse_csv, validate_schema, clean_data
-from core.calculations import compute_kpis, detect_flags, detect_rules
+from core.calculations import compute_kpis, detect_flags
 from core.pdf_generator import (
     SnapshotPDFGenerator,
     SimulatorPDFGenerator,
@@ -41,6 +45,12 @@ from features.simulator import (
     generate_impact_table_html,
 )
 from features.explain_engine import generate_full_explanation
+from core.policy import (
+    PolicyViolation,
+    policy_guard,
+    policy_log_event,
+    ensure_audit_events_table,
+)
 
 # Configure logging
 logging.basicConfig(
@@ -48,6 +58,28 @@ logging.basicConfig(
     format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
 )
 logger = logging.getLogger(__name__)
+
+
+# =============================================================================
+# M3.75 Phase B: Audit Helpers
+# =============================================================================
+
+def get_client_ip(request: Request) -> str | None:
+    """Extract client IP from X-Forwarded-For header or request.client.host."""
+    forwarded = request.headers.get("x-forwarded-for")
+    if forwarded:
+        return forwarded.split(",")[0].strip()
+    if request.client:
+        return request.client.host
+    return None
+
+
+def safe_json_dumps(obj) -> str:
+    """JSON-serialize with fallback for non-serializable types. Never raises."""
+    try:
+        return json.dumps(obj, default=str)
+    except Exception:
+        return '{"error":"serialization_failed"}'
 
 # FastAPI Setup
 app = FastAPI(title="Banker Analytics", version="3.0")
@@ -77,6 +109,95 @@ logger.info(f"Exports directory: {EXPORTS_DIR}")
 ANALYSES_DIR = BASE_DIR / "data" / "analyses"
 ANALYSES_DIR.mkdir(parents=True, exist_ok=True)
 logger.info(f"Analyses directory: {ANALYSES_DIR}")
+
+# M3.75: Ensure audit_events table exists (idempotent, non-fatal)
+try:
+    _audit_conn = db._get_connection()
+    ensure_audit_events_table(_audit_conn)
+    _audit_conn.close()
+except Exception as e:
+    logger.warning(f"Audit events table setup failed (non-fatal): {e}")
+
+
+# =============================================================================
+# M3.75 Phase 1: Policy Middleware
+# =============================================================================
+
+# Protected persistent route prefixes that require authentication
+_PROTECTED_PREFIXES = (
+    "/snapshot/a/",
+    "/simulator/a/",
+    "/explain/a/",
+    "/history",
+    "/api/analyses/",
+)
+
+
+class PolicyMiddleware(BaseHTTPMiddleware):
+    """
+    M3.75: Sets request.state.request_id and request.state.current_user,
+    enforces auth for protected persistent routes.
+    """
+
+    async def dispatch(self, request: Request, call_next):
+        # Assign unique request ID for traceability
+        request.state.request_id = str(uuid.uuid4())[:12]
+
+        # Resolve current user from cookies (reuse existing auth)
+        request.state.current_user = get_current_user(request)
+
+        # Enforce authentication on protected persistent routes
+        path = request.url.path
+        if any(path.startswith(prefix) for prefix in _PROTECTED_PREFIXES):
+            if not request.state.current_user:
+                # JSON endpoints → 403; HTML pages → redirect to login
+                if path.startswith("/api/"):
+                    return JSONResponse(
+                        {"detail": "Authentication required"}, status_code=403
+                    )
+                return RedirectResponse(url="/login", status_code=302)
+
+        response = await call_next(request)
+        return response
+
+
+# Register AFTER SessionMiddleware in code → runs as outer layer
+# (cookies are in HTTP headers, always available regardless of middleware order)
+app.add_middleware(PolicyMiddleware)
+
+
+# =============================================================================
+# M3.75 Phase 1: Uniform PolicyViolation Exception Handler
+# =============================================================================
+
+@app.exception_handler(PolicyViolation)
+async def policy_violation_handler(request: Request, exc: PolicyViolation):
+    """M3.75: Uniform handler — HTML for pages, JSON for /api/* routes."""
+    logger.warning(f"PolicyViolation: [{exc.rule}] {exc.detail}")
+
+    # Audit the violation
+    current_user = get_current_user(request)
+    user_id = current_user["user_id"] if current_user else None
+    policy_log_event(
+        db=db,
+        user_id=user_id,
+        event_kind="policy_violation",
+        details_json=safe_json_dumps({"rule": exc.rule, "detail": exc.detail, "context": exc.context}),
+        request_id=getattr(request.state, "request_id", None),
+        ip_address=get_client_ip(request),
+    )
+
+    if request.url.path.startswith("/api/"):
+        return JSONResponse(
+            {"detail": f"Policy violation: {exc.detail}", "rule": exc.rule},
+            status_code=403,
+        )
+
+    return templates.TemplateResponse(
+        "error.html",
+        {"request": request, "error": f"Policy violation: {exc.detail}"},
+        status_code=403,
+    )
 
 
 def cleanup_old_exports(max_age_hours: int = 24):
@@ -192,6 +313,13 @@ async def login(request: Request, username: str = "", password: str = ""):
 
         if not user_id:
             logger.warning(f"Failed login attempt: {username}")
+            # M3.75: Audit login failure
+            policy_log_event(
+                db=db, user_id=None, event_kind="login_failure",
+                details_json=safe_json_dumps({"username": username}),
+                request_id=getattr(request.state, "request_id", None),
+                ip_address=get_client_ip(request),
+            )
             return templates.TemplateResponse(
                 "login.html",
                 {
@@ -203,6 +331,15 @@ async def login(request: Request, username: str = "", password: str = ""):
         # Create response and set session cookies
         response = RedirectResponse(url="/", status_code=302)
         login_user(response, user_id, username)
+
+        # M3.75: Audit login success
+        policy_log_event(
+            db=db, user_id=user_id, event_kind="login_success",
+            details_json=safe_json_dumps({"username": username}),
+            request_id=getattr(request.state, "request_id", None),
+            ip_address=get_client_ip(request),
+        )
+
         return response
 
     except Exception as e:
@@ -289,6 +426,14 @@ async def register(request: Request):
             )
 
         logger.info(f"User registered: {username}")
+
+        # M3.75: Audit registration
+        policy_log_event(
+            db=db, user_id=user_id, event_kind="register",
+            details_json=safe_json_dumps({"username": username}),
+            request_id=getattr(request.state, "request_id", None),
+            ip_address=get_client_ip(request),
+        )
 
         # Auto-login after successful registration
         response = RedirectResponse(url="/", status_code=302)
@@ -408,6 +553,24 @@ async def upload(request: Request, file: UploadFile = File(...)):
         validate_schema(df)
         df_clean = clean_data(df)
 
+        # M3.75 Phase 2: Upload gate — policy_guard before storing
+        current_user_pre = get_current_user(request)
+        nan_fields = [
+            col for col in ("date", "balance", "rate")
+            if df_clean[col].isna().any()
+        ]
+        upload_context = {
+            "route": "/upload",
+            "mode": "persistent" if current_user_pre else "session",
+            "filename": file.filename,
+            "row_count": len(df_clean),
+            "date_min": str(df_clean["date"].min()) if len(df_clean) > 0 else None,
+            "date_max": str(df_clean["date"].max()) if len(df_clean) > 0 else None,
+            "user_id": current_user_pre["user_id"] if current_user_pre else None,
+            "nan_fields": nan_fields,
+        }
+        policy_guard(upload_context)
+
         # Always create session for quick mode (backward compat)
         session_id = session_manager.store_session(df_clean, file.filename)
         logger.info(f"Session created: {session_id} for {file.filename}")
@@ -490,7 +653,16 @@ async def upload(request: Request, file: UploadFile = File(...)):
                         logger.info(f"Trends computed and stored: {len(trends)} metrics for analysis {analysis_id}")
                     except Exception as e:
                         logger.warning(f"Trend computation failed (non-fatal): {str(e)}")
-                        # Continue with successful upload even if trends fail
+                        # M3.75: Audit trend failure (non-fatal, does not block upload)
+                        policy_log_event(
+                            db=db,
+                            user_id=current_user["user_id"],
+                            event_kind="trend_compute_failure",
+                            details_json=safe_json_dumps({"error": str(e), "analysis_id": analysis_id}),
+                            analysis_id=analysis_id,
+                            request_id=getattr(request.state, "request_id", None),
+                            ip_address=get_client_ip(request),
+                        )
 
                     response_data["analysis_id"] = analysis_id
                     logger.info(f"Analysis created: {analysis_id} for user {current_user['user_id']}")
@@ -499,8 +671,25 @@ async def upload(request: Request, file: UploadFile = File(...)):
                 logger.warning(f"Failed to create persistent analysis (continuing with session): {str(e)}")
                 # Continue with session-based response if analysis creation fails
 
+        # M3.75: Audit upload event
+        policy_log_event(
+            db=db,
+            user_id=current_user["user_id"] if current_user else None,
+            event_kind="upload",
+            details_json=safe_json_dumps({
+                "filename": file.filename,
+                "row_count": len(df_clean),
+                "analysis_id": response_data.get("analysis_id"),
+            }),
+            session_id=session_id,
+            request_id=getattr(request.state, "request_id", None),
+            ip_address=get_client_ip(request),
+        )
+
         return JSONResponse(response_data, status_code=200)
 
+    except PolicyViolation:
+        raise  # Let the exception handler deal with it
     except ValueError as e:
         logger.warning(f"Upload validation error: {str(e)}")
         return JSONResponse({"detail": str(e)}, status_code=400)
@@ -1314,6 +1503,27 @@ async def export_snapshot_pdf(request: Request, session_id: str, analysis_id: in
                     logger.warning(f"User {current_user['user_id']} does not own analysis {analysis_id}")
             except Exception as e:
                 logger.warning(f"Failed to create export record (continuing with file): {str(e)}")
+                # M3.75: Audit export record failure
+                policy_log_event(
+                    db=db,
+                    user_id=current_user["user_id"] if current_user else None,
+                    event_kind="export_record_failed",
+                    details_json=safe_json_dumps({"error": str(e), "analysis_id": analysis_id, "kind": "snapshot_pdf"}),
+                    analysis_id=analysis_id,
+                    request_id=getattr(request.state, "request_id", None),
+                    ip_address=get_client_ip(request),
+                )
+
+        # M3.75: Audit export success
+        policy_log_event(
+            db=db,
+            user_id=current_user["user_id"] if current_user else None,
+            event_kind="export_pdf",
+            details_json=safe_json_dumps({"kind": "snapshot_pdf", "session_id": session_id}),
+            session_id=session_id,
+            request_id=getattr(request.state, "request_id", None),
+            ip_address=get_client_ip(request),
+        )
 
         # Return download link
         filename = Path(pdf_path).name
@@ -1445,6 +1655,45 @@ async def export_simulator_pdf(
         )
 
 
+# M4.00 Phase A: Excel export route (session-mode simulator)
+@app.post("/simulator/{session_id}/export-xlsx")
+async def export_simulator_xlsx(request: Request, session_id: str):
+    """Export simulator results to Excel workbook. Session mode only (Phase A)."""
+    try:
+        logger.info(f"POST /simulator/{session_id}/export-xlsx")
+        session = session_manager.get_session(session_id)
+
+        if not session:
+            logger.warning(f"Session not found for xlsx export: {session_id}")
+            raise HTTPException(
+                status_code=404, detail="Session expired or not found"
+            )
+
+        from features.excel_export import build_excel_workbook
+
+        filepath = build_excel_workbook(
+            mode="session",
+            feature="simulator",
+            session_id=session_id,
+            request=request,
+        )
+
+        filename = Path(filepath).name
+        return FileResponse(
+            path=filepath,
+            filename=filename,
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Simulator Excel export error: {str(e)}")
+        return JSONResponse(
+            {"success": False, "error": str(e)}, status_code=500
+        )
+
+
 @app.post("/explain/{session_id}/export-pdf")
 async def export_explain_pdf(request: Request, session_id: str, analysis_id: int = None):
     """Export Explain page to PDF. M3: Create export record if analysis_id provided."""
@@ -1541,6 +1790,15 @@ async def export_snapshot_analysis_pdf(request: Request, analysis_id: int):
             raise HTTPException(status_code=404, detail="Analysis file not found")
 
         parquet_path = BASE_DIR / analysis_file["stored_path"]
+
+        # M3.75 Phase C: Policy guard for persistent export
+        policy_guard({
+            "route": "/snapshot/a/export-pdf",
+            "mode": "persistent",
+            "user_id": user_id,
+            "analysis_id": analysis_id,
+        })
+
         df = pd.read_parquet(str(parquet_path))
 
         # Compute KPIs and generate PDF
@@ -1583,7 +1841,7 @@ async def export_snapshot_analysis_pdf(request: Request, analysis_id: int):
             "export_id": export_record_id,
         })
 
-    except HTTPException:
+    except (HTTPException, PolicyViolation):
         raise
     except Exception as e:
         logger.error(f"Snapshot analysis PDF export error: {str(e)}")
@@ -1616,6 +1874,15 @@ async def export_simulator_analysis_pdf(
             raise HTTPException(status_code=404, detail="Analysis file not found")
 
         parquet_path = BASE_DIR / analysis_file["stored_path"]
+
+        # M3.75 Phase C: Policy guard for persistent export
+        policy_guard({
+            "route": "/simulator/a/export-pdf",
+            "mode": "persistent",
+            "user_id": user_id,
+            "analysis_id": analysis_id,
+        })
+
         df = pd.read_parquet(str(parquet_path))
 
         # Compute baseline KPIs
@@ -1686,7 +1953,7 @@ async def export_simulator_analysis_pdf(
             "export_id": export_record_id,
         })
 
-    except HTTPException:
+    except (HTTPException, PolicyViolation):
         raise
     except Exception as e:
         logger.error(f"Simulator analysis PDF export error: {str(e)}")
@@ -1717,6 +1984,15 @@ async def export_explain_analysis_pdf(request: Request, analysis_id: int):
             raise HTTPException(status_code=404, detail="Analysis file not found")
 
         parquet_path = BASE_DIR / analysis_file["stored_path"]
+
+        # M3.75 Phase C: Policy guard for persistent export
+        policy_guard({
+            "route": "/explain/a/export-pdf",
+            "mode": "persistent",
+            "user_id": user_id,
+            "analysis_id": analysis_id,
+        })
+
         df = pd.read_parquet(str(parquet_path))
 
         # Generate explanation
@@ -1758,7 +2034,7 @@ async def export_explain_analysis_pdf(request: Request, analysis_id: int):
             "export_id": export_record_id,
         })
 
-    except HTTPException:
+    except (HTTPException, PolicyViolation):
         raise
     except Exception as e:
         logger.error(f"Explain analysis PDF export error: {str(e)}")
@@ -1766,7 +2042,7 @@ async def export_explain_analysis_pdf(request: Request, analysis_id: int):
 
 
 @app.get("/exports/{filename}")
-async def download_pdf(filename: str):
+async def download_pdf(request: Request, filename: str):
     """Download generated PDF."""
     try:
         filepath = EXPORTS_DIR / filename
@@ -1776,6 +2052,17 @@ async def download_pdf(filename: str):
             raise HTTPException(status_code=404, detail="PDF not found")
 
         logger.info(f"Downloading PDF: {filename}")
+
+        # M3.75: Audit download
+        current_user = get_current_user(request)
+        policy_log_event(
+            db=db,
+            user_id=current_user["user_id"] if current_user else None,
+            event_kind="download_pdf",
+            details_json=safe_json_dumps({"filename": filename}),
+            request_id=getattr(request.state, "request_id", None),
+            ip_address=get_client_ip(request),
+        )
 
         return FileResponse(
             path=filepath,
@@ -1809,6 +2096,78 @@ async def get_session_meta(session_id: str):
     }
 
 
+# =============================================================================
+# M3.75 Phase 2: Policy-Enforced API Endpoint
+# =============================================================================
+
+@app.get("/api/analyses/{analysis_id}/explain")
+async def api_explain_analysis(request: Request, analysis_id: int):
+    """
+    M3.75: JSON API for explanation with rules_fired.
+    Enforces user auth + ownership via middleware + policy_guard.
+    """
+    # Auth enforced by PolicyMiddleware (returns 403 for /api/* prefixes)
+    current_user = get_current_user(request)
+    if not current_user:
+        return JSONResponse({"detail": "Authentication required"}, status_code=403)
+
+    user_id = current_user["user_id"]
+
+    # Ownership check
+    analysis = db.get_analysis(analysis_id, user_id)
+    if not analysis:
+        return JSONResponse(
+            {"detail": "Analysis not found or access denied"}, status_code=404
+        )
+
+    # Load parquet
+    analysis_file = db.get_analysis_file(analysis_id, user_id)
+    if not analysis_file:
+        return JSONResponse({"detail": "Analysis data not found"}, status_code=404)
+
+    parquet_path = BASE_DIR / analysis_file["stored_path"]
+    if not parquet_path.exists():
+        return JSONResponse(
+            {"detail": "Analysis data file not found on disk"}, status_code=404
+        )
+
+    # M3.75 Phase C: Policy guard for persistent explain access
+    policy_guard({
+        "route": "/api/analyses/explain",
+        "mode": "persistent",
+        "user_id": user_id,
+        "analysis_id": analysis_id,
+    })
+
+    df = pd.read_parquet(str(parquet_path))
+    explanation = generate_full_explanation(df)
+
+    rules_fired = explanation.get("rules_fired", [])
+
+    # M3.75: Audit API explain access
+    policy_log_event(
+        db=db,
+        user_id=user_id,
+        event_kind="api_explain",
+        details_json=safe_json_dumps({
+            "analysis_id": analysis_id,
+            "rules_fired": rules_fired,
+        }),
+        analysis_id=analysis_id,
+        request_id=getattr(request.state, "request_id", None),
+        ip_address=get_client_ip(request),
+    )
+
+    return JSONResponse({
+        "analysis_id": analysis_id,
+        "filename": analysis["filename"],
+        "what_matters": explanation["what_matters"],
+        "what_risks": explanation["what_risks"],
+        "whats_next": explanation["whats_next"],
+        "rules_fired": rules_fired,
+    })
+
+
 # Health check
 @app.get("/health")
 async def health():
@@ -1822,5 +2181,5 @@ async def health():
 if __name__ == "__main__":
     import uvicorn
 
-    logger.info("Starting Banker Analytics (Milestone 1 + 2)")
+    logger.info("Starting Banker Analytics (Milestone 3.75)")
     uvicorn.run(app, host="127.0.0.1", port=8000)

@@ -3,17 +3,201 @@ Banker Analytics Policy Enforcement Module
 
 Integrates POLICY.md rules into app.py as runtime validators and decorators.
 Enforces: user isolation, ownership checks, determinism, safe-fail, auditability.
+
+M3.75: Extended with PolicyConfig, PolicyViolation, policy_guard, audit_events.
 """
 
 import logging
 import functools
+import json
+import os
 import uuid
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Callable, Any, Optional, Dict
 from fastapi import HTTPException, status
 from starlette.requests import Request
 
 logger = logging.getLogger(__name__)
+
+# =============================================================================
+# M3.75: POLICY-AS-CODE FOUNDATION
+# =============================================================================
+
+@dataclass
+class PolicyConfig:
+    """
+    M3.75 Phase 0: Policy toggles with environment variable overrides.
+    All default True for strict enforcement.
+    Override via env: POLICY_LOCAL_FIRST_ONLY=false, etc.
+    """
+    LOCAL_FIRST_ONLY: bool = True
+    DETERMINISTIC_ONLY: bool = True
+    NO_EXTERNAL_REQUESTS: bool = True
+    REQUIRE_EXPLAIN_RULES: bool = True
+    REQUIRE_ANALYSIS_OWNERSHIP: bool = True
+    STRICT_EXPORT_REFERENCES: bool = True
+
+    def __post_init__(self):
+        """Override from env vars if present."""
+        for field_name in self.__dataclass_fields__:
+            env_val = os.getenv(f"POLICY_{field_name}")
+            if env_val is not None:
+                setattr(self, field_name, env_val.lower() in ("true", "1", "yes"))
+
+
+# Singleton — loaded once at import time
+policy_config = PolicyConfig()
+
+
+class PolicyViolation(Exception):
+    """
+    M3.75: Raised when a policy rule is violated.
+    Caught by the uniform exception handler in app.py.
+    """
+    def __init__(self, rule: str, detail: str, context: dict = None):
+        self.rule = rule
+        self.detail = detail
+        self.context = context or {}
+        super().__init__(f"Policy violation [{rule}]: {detail}")
+
+
+def policy_guard(context: dict) -> None:
+    """
+    M3.75 Phase 0/2: Central policy gate.
+    Called at hot points (upload, export, explain) to validate context.
+    Raises PolicyViolation on clear violations.
+
+    Args:
+        context: dict with keys like route, mode, filename, row_count,
+                 date_min, date_max, user_id, file_hash, nan_fields, etc.
+    """
+    config = policy_config
+    route = context.get("route", "")
+    mode = context.get("mode", "session")
+
+    # Rule: persistent mode must have user_id
+    if config.REQUIRE_ANALYSIS_OWNERSHIP:
+        if mode == "persistent" and not context.get("user_id"):
+            raise PolicyViolation(
+                rule="REQUIRE_ANALYSIS_OWNERSHIP",
+                detail="Persistent analysis requires authenticated user",
+                context=context,
+            )
+
+    # Rule: required fields cannot contain NaNs after cleaning
+    nan_fields = context.get("nan_fields", [])
+    if nan_fields:
+        raise PolicyViolation(
+            rule="DATA_QUALITY",
+            detail=f"Required fields contain NaN values after cleaning: {nan_fields}",
+            context=context,
+        )
+
+    # Rule: no external requests allowed
+    if config.NO_EXTERNAL_REQUESTS and context.get("has_external_request"):
+        raise PolicyViolation(
+            rule="NO_EXTERNAL_REQUESTS",
+            detail="External network requests are not allowed",
+            context=context,
+        )
+
+    # Rule: local-first only
+    if config.LOCAL_FIRST_ONLY and context.get("requires_cloud"):
+        raise PolicyViolation(
+            rule="LOCAL_FIRST_ONLY",
+            detail="Cloud-dependent operations are not allowed",
+            context=context,
+        )
+
+    logger.debug(f"Policy guard passed for route={route} mode={mode}")
+
+
+def ensure_audit_events_table(db_conn) -> bool:
+    """
+    M3.75: Create audit_events table idempotently.
+    Safe to call multiple times. Warns and continues on failure.
+
+    Args:
+        db_conn: Raw sqlite3 connection (not the Database wrapper)
+
+    Returns:
+        True if table was created/already exists, False on failure
+    """
+    try:
+        cursor = db_conn.cursor()
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS audit_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                user_id INTEGER,
+                event_kind TEXT NOT NULL,
+                details_json TEXT,
+                analysis_id INTEGER,
+                session_id TEXT,
+                request_id TEXT,
+                ip_address TEXT
+            )
+        """)
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_audit_events_user_id
+            ON audit_events(user_id)
+        """)
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_audit_events_event_kind
+            ON audit_events(event_kind)
+        """)
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_audit_events_timestamp
+            ON audit_events(timestamp)
+        """)
+        db_conn.commit()
+        logger.info("M3.75: audit_events table ensured")
+        return True
+    except Exception as e:
+        logger.warning(f"Failed to create audit_events table (non-fatal): {e}")
+        return False
+
+
+def policy_log_event(
+    db,
+    user_id: int | None,
+    event_kind: str,
+    details_json: str = None,
+    analysis_id: int | None = None,
+    session_id: str | None = None,
+    request_id: str | None = None,
+    ip_address: str | None = None,
+) -> None:
+    """
+    M3.75: Log an audit event to the audit_events table.
+    Non-fatal: logs warning on failure, never raises.
+
+    Args:
+        db: Database wrapper instance (has execute_query)
+        user_id: User who triggered the event (None for anonymous)
+        event_kind: Event type (login_success, login_failure, register,
+                    upload, create_analysis, export_pdf, download_pdf,
+                    policy_violation, etc.)
+        details_json: Optional JSON string with extra details
+        analysis_id: Related analysis ID (optional)
+        session_id: Related session ID (optional)
+        request_id: Request trace ID (optional)
+        ip_address: Client IP (optional)
+    """
+    try:
+        db.execute_query(
+            """
+            INSERT INTO audit_events
+                (user_id, event_kind, details_json, analysis_id, session_id, request_id, ip_address)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (user_id, event_kind, details_json, analysis_id, session_id, request_id, ip_address),
+        )
+        logger.debug(f"Audit event logged: {event_kind} user={user_id}")
+    except Exception as e:
+        logger.warning(f"Failed to log audit event {event_kind} (non-fatal): {e}")
+
 
 # =============================================================================
 # POLICY CONFIGURATION (From POLICY.md)

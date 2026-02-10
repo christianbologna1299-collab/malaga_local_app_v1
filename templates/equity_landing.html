@@ -1,0 +1,111 @@
+{% extends "base.html" %}
+
+{% block title %}Banker Analytics - Equity Research{% endblock %}
+
+{% block content %}
+<div class="hub-header">
+    <h2 class="section-title">Equity Research</h2>
+    <p class="section-subtitle">Generate a full equity research workbook with financial statements, DCF valuation, sensitivity analysis, and quantitative metrics.</p>
+</div>
+
+<div class="hub-content">
+    <section class="hub-section">
+        <div class="card upload-card">
+            <h3>Enter Ticker Symbol</h3>
+            <p class="card-description">Provide a stock ticker to generate a comprehensive equity research report.</p>
+            <form id="equityForm">
+                <div class="form-group">
+                    <label for="tickerInput">Ticker Symbol:</label>
+                    <input type="text" id="tickerInput" name="ticker" placeholder="e.g. AAPL" required
+                           style="padding: 8px 12px; font-size: 16px; border: 2px solid #00D9FF; border-radius: 8px; background: #1a1a2e; color: #E0E0E0; width: 200px;">
+                </div>
+                <button type="submit" class="btn-primary" id="runBtn">Generate Research</button>
+            </form>
+
+            <div id="statusArea" style="margin-top: 20px; display: none;">
+                <p id="statusText" style="color: #00D9FF;"></p>
+            </div>
+
+            <div id="resultsArea" style="margin-top: 20px; display: none;">
+                <h3>Results</h3>
+                <div id="resultLinks" style="display: flex; gap: 12px; flex-wrap: wrap;"></div>
+            </div>
+        </div>
+    </section>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+document.getElementById('equityForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const ticker = document.getElementById('tickerInput').value.trim();
+    if (!ticker) return;
+
+    const statusArea = document.getElementById('statusArea');
+    const statusText = document.getElementById('statusText');
+    const resultsArea = document.getElementById('resultsArea');
+    const resultLinks = document.getElementById('resultLinks');
+    const runBtn = document.getElementById('runBtn');
+
+    statusArea.style.display = 'block';
+    resultsArea.style.display = 'none';
+    resultLinks.innerHTML = '';
+    runBtn.disabled = true;
+
+    try {
+        // Step 1: Create snapshot
+        statusText.textContent = 'Creating snapshot...';
+        const snapForm = new FormData();
+        snapForm.append('ticker', ticker);
+        const snapRes = await fetch('/equity/snapshot', { method: 'POST', body: snapForm });
+        if (!snapRes.ok) throw new Error('Snapshot failed');
+        const snapData = await snapRes.json();
+
+        // Step 2: Run model
+        statusText.textContent = 'Running valuation model...';
+        const modelRes = await fetch(`/equity/${snapData.snapshot_id}/run-model`, { method: 'POST' });
+        if (!modelRes.ok) throw new Error('Model run failed');
+        const modelData = await modelRes.json();
+
+        // Step 3: Show download link
+        statusText.textContent = 'Done!';
+        resultsArea.style.display = 'block';
+
+        const dlBtn = document.createElement('a');
+        dlBtn.href = '#';
+        dlBtn.className = 'btn-primary';
+        dlBtn.textContent = 'Download Excel';
+        dlBtn.style.textDecoration = 'none';
+        dlBtn.addEventListener('click', async (ev) => {
+            ev.preventDefault();
+            const res = await fetch(`/equity/${modelData.model_run_id}/export-xlsx`, { method: 'POST' });
+            if (res.ok) {
+                const blob = await res.blob();
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `equity_research_${ticker}.xlsx`;
+                a.click();
+                URL.revokeObjectURL(url);
+            }
+        });
+        resultLinks.appendChild(dlBtn);
+
+        const reportBtn = document.createElement('a');
+        reportBtn.href = `/equity/${modelData.model_run_id}/report-draft`;
+        reportBtn.className = 'btn-primary';
+        reportBtn.textContent = 'View Report Draft';
+        reportBtn.style.textDecoration = 'none';
+        reportBtn.target = '_blank';
+        resultLinks.appendChild(reportBtn);
+
+    } catch (err) {
+        statusText.textContent = 'Error: ' + err.message;
+        statusText.style.color = '#FF6B9D';
+    } finally {
+        runBtn.disabled = false;
+    }
+});
+</script>
+{% endblock %}

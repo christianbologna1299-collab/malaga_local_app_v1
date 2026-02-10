@@ -20,7 +20,7 @@ import io
 # Core & Features imports
 from core.database_session_manager import DatabaseSessionManager
 from core.validators import parse_csv, validate_schema, clean_data
-from core.calculations import compute_kpis, detect_flags, detect_rules
+from core.calculations import compute_kpis, detect_flags
 from core.pdf_generator import (
     SnapshotPDFGenerator,
     SimulatorPDFGenerator,
@@ -41,6 +41,8 @@ from features.simulator import (
     generate_impact_table_html,
 )
 from features.explain_engine import generate_full_explanation
+from features.equity.routes import register_equity_routes
+from features.equity.db import init_equity_tables
 
 # Configure logging
 logging.basicConfig(
@@ -77,6 +79,11 @@ logger.info(f"Exports directory: {EXPORTS_DIR}")
 ANALYSES_DIR = BASE_DIR / "data" / "analyses"
 ANALYSES_DIR.mkdir(parents=True, exist_ok=True)
 logger.info(f"Analyses directory: {ANALYSES_DIR}")
+
+# M5: Initialize equity research tables and routes
+init_equity_tables(db)
+register_equity_routes(app, templates, db)
+logger.info("M5 Equity Research: tables and routes initialized")
 
 
 def cleanup_old_exports(max_age_hours: int = 24):

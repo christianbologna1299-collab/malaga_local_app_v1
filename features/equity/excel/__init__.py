@@ -1,0 +1,3 @@
+"""
+Equity Excel workbook generation.
+"""

@@ -1,0 +1,3 @@
+"""
+Equity data providers.
+"""

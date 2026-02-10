@@ -164,9 +164,14 @@
         <h2 class="section-title">Next Steps</h2>
         <div class="related-features">
             {% if results %}
-            <button class="btn-export-pdf" onclick="exportPDFHandler('{{ session_id }}', '{{ analysis_id }}', 'simulator', {{ results | tojson }})">
+            <button class="btn-export-pdf" onclick="exportPDFHandler('{{ session_id }}', '{{ analysis_id }}', 'simulator')">
                 📄 Export PDF
             </button>
+            {% if session_id %}
+            <button class="btn-export-pdf" onclick="exportExcelHandler('{{ session_id }}')">
+                📊 Export Excel
+            </button>
+            {% endif %}
             {% endif %}
             <a href="/snapshot/{{ route_prefix }}{{ route_id }}" class="btn-feature">
                 📊 View Snapshot
@@ -417,7 +422,7 @@
 </style>
 
 <script>
-    function exportPDFHandler(sessionId, analysisId, feature, results) {
+    function exportPDFHandler(sessionId, analysisId, feature) {
         const endpoint = analysisId ? `/simulator/a/${analysisId}/export-pdf` : `/simulator/${sessionId}/export-pdf`;
 
         // Get form values for shocks
@@ -454,6 +459,30 @@
         .catch(error => {
             console.error('Export error:', error);
             alert('Error exporting PDF: ' + error.message);
+        });
+    }
+
+    function exportExcelHandler(sessionId) {
+        const endpoint = `/simulator/${sessionId}/export-xlsx`;
+
+        fetch(endpoint, { method: 'POST' })
+        .then(response => {
+            if (!response.ok) throw new Error('Export failed: ' + response.status);
+            return response.blob();
+        })
+        .then(blob => {
+            const url = window.URL.createObjectURL(blob);
+            const link = document.createElement('a');
+            link.href = url;
+            link.download = 'banker_analytics_simulator.xlsx';
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+            window.URL.revokeObjectURL(url);
+        })
+        .catch(error => {
+            console.error('Excel export error:', error);
+            alert('Error exporting Excel: ' + error.message);
         });
     }
 </script>
